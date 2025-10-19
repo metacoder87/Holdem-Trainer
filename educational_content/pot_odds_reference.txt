@@ -1,0 +1,69 @@
+POT ODDS REFERENCE GUIDE
+========================
+
+BASIC FORMULA:
+Pot Odds = Amount to Call ÷ (Pot Size + Amount to Call)
+Required Equity = Pot Odds
+
+COMMON POT ODDS SCENARIOS:
+--------------------------
+
+$10 call into $20 pot = $10 ÷ $30 = 33.3% equity needed
+$25 call into $50 pot = $25 ÷ $75 = 33.3% equity needed
+$20 call into $100 pot = $20 ÷ $120 = 16.7% equity needed
+$50 call into $150 pot = $50 ÷ $200 = 25.0% equity needed
+
+QUICK REFERENCE TABLE:
+----------------------
+Bet Size    | Pot Odds  | Ratio | Equity Needed
+============|===========|=======|==============
+1/2 pot     | 25.0%     | 3:1   | 25%
+2/3 pot     | 28.6%     | 2.5:1 | 29%
+3/4 pot     | 30.0%     | 2.3:1 | 30%
+Full pot    | 33.3%     | 2:1   | 33%
+1.5x pot    | 37.5%     | 1.7:1 | 38%
+2x pot      | 40.0%     | 1.5:1 | 40%
+
+COMMON DRAWING HANDS:
+---------------------
+
+FLUSH DRAW (9 outs):
+- After flop: ~35% equity (need 22% pot odds to call)
+- After turn: ~20% equity (need 33% pot odds to call)
+
+OPEN-ENDED STRAIGHT DRAW (8 outs):
+- After flop: ~31% equity (need 24% pot odds to call)
+- After turn: ~17% equity (need 37% pot odds to call)
+
+GUTSHOT STRAIGHT DRAW (4 outs):
+- After flop: ~16% equity (need 38% pot odds to call)
+- After turn: ~9% equity (need 53% pot odds to call)
+
+COMBO DRAWS:
+- Flush + Straight (15 outs): ~54% equity
+- Flush + Pair (12 outs): ~42% equity
+- Straight + Overcards (14 outs): ~51% equity
+
+RULE OF 4 AND 2:
+----------------
+Quick approximation for equity:
+- After FLOP: Outs × 4 = rough % to make hand by river
+- After TURN: Outs × 2 = rough % to make hand on river
+
+Examples:
+- 9 outs after flop: 9 × 4 = 36% (actual: 35%)
+- 8 outs after turn: 8 × 2 = 16% (actual: 17%)
+
+IMPLIED ODDS:
+-------------
+Consider future betting when deciding to call:
+- If you can win more money when you hit your draw
+- Against loose opponents who pay off big bets
+- With disguised draws that are hard to spot
+
+REVERSE IMPLIED ODDS:
+--------------------
+Consider losing more money even if you hit:
+- Drawing to second-best hand
+- Against tight opponents who only bet nuts
+- On boards where your draw might not be best

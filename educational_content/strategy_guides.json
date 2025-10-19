@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Preflop Hand Selection",
+    "content": "\n                **EARLY POSITION (UTG, UTG+1):**\n                Play tight - only premium hands:\n                • Pocket Pairs: AA, KK, QQ, JJ, 10-10\n                • Suited: AKs, AQs, AJs\n                • Offsuit: AK, AQ\n                \n                **MIDDLE POSITION (MP, MP+1):**\n                Add some medium hands:\n                • Pocket Pairs: 99, 88, 77\n                • Suited: KQs, QJs, JTs, A10s, KJs\n                • Offsuit: AJ, KQ\n                \n                **LATE POSITION (CO, BTN):**\n                Play more hands for value and position:\n                • Pocket Pairs: Any pair 22+\n                • Suited: Any two cards 9+ or suited connectors 54s+\n                • Offsuit: A9+, K10+, QJ, J10\n                \n                **BLINDS:**\n                Defend wider against raises, but be careful out of position.\n                ",
+    "category": "preflop",
+    "difficulty": "beginner"
+  },
+  {
+    "title": "Postflop Continuation Betting",
+    "content": "\n                **WHEN TO C-BET:**\n                • You have a strong hand or draw\n                • Board is dry (like A-7-2 rainbow)\n                • Opponent is tight and likely to fold\n                • You're in position\n                \n                **C-BET SIZING:**\n                • Strong hands: 65-75% pot for value\n                • Bluffs: 50-65% pot for fold equity\n                • Dry boards: Smaller sizing (40-50%)\n                • Wet boards: Larger sizing (70-80%)\n                \n                **WHEN NOT TO C-BET:**\n                • Very wet, coordinated boards (9-8-7 with two suits)\n                • Against multiple opponents\n                • When opponent is loose-passive (calling station)\n                • When you have no equity and no fold equity\n                ",
+    "category": "postflop",
+    "difficulty": "intermediate"
+  },
+  {
+    "title": "Pot Odds and Drawing Hands",
+    "content": "\n                **CALCULATING POT ODDS:**\n                1. Add bet you must call to current pot\n                2. Divide your call by the total\n                3. Compare to your equity percentage\n                \n                **COMMON DRAWS AND ODDS:**\n                • Flush draw (9 outs): ~35% equity (need 22% pot odds)\n                • Open-ended straight (8 outs): ~31% equity (need 24% pot odds)\n                • Gutshot straight (4 outs): ~16% equity (need 40% pot odds)\n                • Two overcards (6 outs): ~24% equity (need 30% pot odds)\n                \n                **RULE OF 4 AND 2:**\n                • After flop: Multiply outs by 4 for approximate %\n                • After turn: Multiply outs by 2 for approximate %\n                \n                Example: 9 outs after flop = 9 × 4 = 36% equity\n                ",
+    "category": "math",
+    "difficulty": "intermediate"
+  },
+  {
+    "title": "Reading Opponent Types",
+    "content": "\n                **TIGHT-AGGRESSIVE (TAG):**\n                • VPIP: 15-25%, PFR: 12-20%\n                • Strategy: Rarely bluffs, value bets strong hands\n                • Counter: Bluff more, fold to their aggression\n                \n                **LOOSE-AGGRESSIVE (LAG):**\n                • VPIP: 25-40%, PFR: 18-35%\n                • Strategy: Plays many hands aggressively\n                • Counter: Tighten up, value bet thinner\n                \n                **TIGHT-PASSIVE (Rock):**\n                • VPIP: 10-20%, PFR: 5-12%\n                • Strategy: Plays few hands, calls more than raises\n                • Counter: Steal their blinds, value bet thin\n                \n                **LOOSE-PASSIVE (Fish):**\n                • VPIP: 30-60%, PFR: 5-15%\n                • Strategy: Calls too much, rarely raises\n                • Counter: Value bet heavily, avoid bluffs\n                ",
+    "category": "psychology",
+    "difficulty": "advanced"
+  }
+]
