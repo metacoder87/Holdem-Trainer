@@ -201,7 +201,7 @@ class TestWildAI:
             Card(Suit.HEARTS, Rank.TWO),
             Card(Suit.CLUBS, Rank.FIVE)
         ]
-        ai.deal_hole_calls(weak_cards)
+        ai.deal_hole_cards(weak_cards)
         
         # Good bluffing situation (few opponents)
         game_state = {

@@ -303,9 +303,9 @@ class TestPotIntegration:
         
         pot.create_side_pots()
         
-        assert pot.total == 600
-        # Main pot: 100 * 2 = 200
-        # Side pot: (500 - 100) * 1 = 400 (only player1 eligible)
+        assert pot.total == 650
+        # Main pot: 150 * 2 = 300 (both players contributed at least 150)
+        # Side pot: (500 - 150) * 1 = 350 (only player2 eligible)
         
     def test_pot_rake_calculation(self):
         """Test pot rake calculation for cash games."""
