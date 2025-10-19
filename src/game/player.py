@@ -48,7 +48,6 @@ class Player:
         self.hands_played = 0
         self.hands_won = 0
         self.total_winnings = 0
-        self.total_invested = 0
         self._initial_bankroll = bankroll
     
     def deal_hole_cards(self, cards: List[Card]):
@@ -83,7 +82,6 @@ class Player:
         self.bankroll -= amount
         self.current_bet += amount
         self.total_bet += amount
-        self.total_invested = self.total_bet
     
     def add_to_bet(self, amount: float):
         """
@@ -211,6 +209,11 @@ class Player:
     def is_active(self) -> bool:
         """Check if player is active (not folded and not all-in)."""
         return not self.folded and not self.all_in
+    
+    @property
+    def total_invested(self) -> float:
+        """Return total amount invested in current hand."""
+        return self.total_bet
     
     @property
     def net_position(self) -> float:

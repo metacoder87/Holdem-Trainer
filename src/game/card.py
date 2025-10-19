@@ -45,16 +45,13 @@ class Rank(Enum):
     
     def __str__(self):
         """Return the rank display string."""
-        if self.value <= 10:
-            return str(self.value)
-        elif self == Rank.JACK:
-            return "J"
-        elif self == Rank.QUEEN:
-            return "Q"
-        elif self == Rank.KING:
-            return "K"
-        elif self == Rank.ACE:
-            return "A"
+        rank_symbols = {
+            Rank.JACK: "J",
+            Rank.QUEEN: "Q", 
+            Rank.KING: "K",
+            Rank.ACE: "A"
+        }
+        return rank_symbols.get(self, str(self.value))
     
     def __repr__(self):
         """Return the rank name."""
