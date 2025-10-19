@@ -1,0 +1,49 @@
+TEXAS HOLD'EM PREFLOP STARTING HAND CHARTS
+===========================================
+
+EARLY POSITION (UTG, UTG+1, UTG+2)
+-----------------------------------
+RAISE:
+Pairs: AA, KK, QQ, JJ, 1010
+Suited: AKs, AQs, AJs, A10s, KQs
+Offsuit: AK, AQ, AJ
+
+FOLD: Everything else
+
+MIDDLE POSITION (MP, MP+1)
+--------------------------
+RAISE:
+Pairs: 99, 88, 77, 66 (add to early position hands)
+Suited: KJs, QJs, JTs, A9s, K10s, Q10s
+Offsuit: KQ, KJ, QJ
+
+LATE POSITION (CO, BTN)
+-----------------------
+RAISE:
+Pairs: Any pair 22+
+Suited: Any suited ace, any suited king, suited connectors 54s+, suited one-gappers 64s+
+Offsuit: A9+, K9+, Q9+, J9+, 109+, 98+
+
+SMALL BLIND
+-----------
+Against a raise: Defend with hands that play well postflop
+Call: Pairs 22+, suited aces, suited connectors, broadway cards
+3-bet: Premium hands (similar to early position)
+
+BIG BLIND
+---------
+Against a raise: Defend based on pot odds
+Call: Wide range including weak aces, suited cards, small pairs
+3-bet: Strong hands and some bluffs for balance
+
+COLOR CODING:
+■ = Premium (always raise)
+▲ = Strong (raise in most positions)
+● = Playable (position dependent)
+○ = Marginal (late position only)
+
+POSITION MATTERS!
+- Early position: Play tight (15-20% of hands)
+- Middle position: Open up slightly (20-25% of hands)
+- Late position: Play more hands (25-35% of hands)
+- Blinds: Defend based on pot odds and position

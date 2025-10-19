@@ -1,0 +1,95 @@
+{
+  "starting_hands": {
+    "premium": [
+      "AA",
+      "KK",
+      "QQ",
+      "JJ",
+      "AKs",
+      "AK"
+    ],
+    "strong": [
+      "1010",
+      "AQs",
+      "AQ",
+      "AJs",
+      "KQs",
+      "KQ"
+    ],
+    "playable": [
+      "99",
+      "88",
+      "77",
+      "AJ",
+      "A10s",
+      "KJs",
+      "QJs",
+      "JTs"
+    ],
+    "marginal": [
+      "66",
+      "55",
+      "44",
+      "33",
+      "22",
+      "A9s",
+      "K10s",
+      "Q10s",
+      "J9s"
+    ]
+  },
+  "pot_odds_chart": {
+    "2_to_1": {
+      "percentage": 33.3,
+      "example": "$20 call into $40 pot"
+    },
+    "3_to_1": {
+      "percentage": 25.0,
+      "example": "$10 call into $30 pot"
+    },
+    "4_to_1": {
+      "percentage": 20.0,
+      "example": "$10 call into $40 pot"
+    },
+    "5_to_1": {
+      "percentage": 16.7,
+      "example": "$10 call into $50 pot"
+    }
+  },
+  "common_draws": {
+    "flush_draw": {
+      "outs": 9,
+      "flop_equity": 35,
+      "turn_equity": 19
+    },
+    "open_ended_straight": {
+      "outs": 8,
+      "flop_equity": 31,
+      "turn_equity": 17
+    },
+    "gutshot": {
+      "outs": 4,
+      "flop_equity": 16,
+      "turn_equity": 9
+    },
+    "two_pair_to_full_house": {
+      "outs": 4,
+      "flop_equity": 16,
+      "turn_equity": 9
+    }
+  },
+  "position_names": {
+    "UTG": "Under the Gun - First to act preflop",
+    "MP": "Middle Position",
+    "CO": "Cutoff - One seat right of button",
+    "BTN": "Button - Best position, acts last postflop",
+    "SB": "Small Blind - Posts small blind",
+    "BB": "Big Blind - Posts big blind"
+  },
+  "betting_patterns": {
+    "value_betting": "Bet strong hands to get called by worse hands",
+    "bluffing": "Bet weak hands to make better hands fold",
+    "slow_playing": "Play strong hands passively to trap opponents",
+    "semi_bluffing": "Bet draws that can improve to best hand"
+  }
+}

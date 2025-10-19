@@ -1,0 +1,112 @@
+BETTING PATTERNS AND BET SIZING GUIDE
+=====================================
+
+VALUE BETTING:
+--------------
+Goal: Get called by worse hands
+Sizing: 60-80% of pot
+When: You have a strong hand that's likely best
+
+Examples:
+- Top pair with good kicker on dry board: 65% pot
+- Two pair or better: 75% pot  
+- Nuts or near-nuts: 80% pot
+
+BLUFFING:
+---------
+Goal: Make better hands fold
+Sizing: 60-100% of pot (larger = more fold equity)
+When: You have little showdown value but fold equity
+
+Examples:
+- Missed draw on river: 70% pot
+- Complete air on scary board: 80% pot
+- Semi-bluff with draws: 60% pot
+
+CONTINUATION BETTING (C-BET):
+-----------------------------
+Goal: Win pot immediately or build pot with strong hands
+Sizing: 40-70% of pot depending on board texture
+
+DRY BOARDS (A-7-2 rainbow): 40-50% pot
+- Opponents miss often
+- Small sizing gets folds from air
+
+WET BOARDS (9-8-7 two-tone): 65-75% pot  
+- Need to charge draws
+- Protect your equity
+
+POSITION AND BET SIZING:
+------------------------
+
+IN POSITION:
+- Can bet smaller for value (opponents can't raise easily)
+- Can bluff smaller (have more streets to apply pressure)
+- Generally 50-70% pot sizing
+
+OUT OF POSITION:
+- Need larger sizing to prevent being outplayed
+- Must charge premium for position disadvantage
+- Generally 65-85% pot sizing
+
+OPPONENT TYPE ADJUSTMENTS:
+--------------------------
+
+TIGHT OPPONENTS:
+- Value bet smaller (they won't call big bets light)
+- Bluff more often (they fold too much)
+- Can get away with 50-60% pot sizing
+
+LOOSE OPPONENTS:
+- Value bet larger (they'll call with weak hands)
+- Bluff less often (they don't fold enough)
+- Use 70-90% pot sizing for value
+
+STACK DEPTH CONSIDERATIONS:
+---------------------------
+
+DEEP STACKS (100bb+):
+- Can use smaller sizing early
+- Build pot gradually with strong hands
+- More room for complex strategies
+
+SHORT STACKS (<40bb):
+- Use polarized sizing (small or all-in)
+- Get stacks in quickly with strong hands
+- Less room for multi-street play
+
+COMMON BET SIZING MISTAKES:
+---------------------------
+
+TOO SMALL:
+- Doesn't build pot with strong hands
+- Gives opponents great odds to call
+- Allows draws to see cards cheaply
+
+TOO LARGE:
+- Gets called only by better hands
+- Bloats pot with marginal holdings
+- Commits too much with weak hands
+
+INCONSISTENT:
+- Bet sizing tells (small=bluff, large=value)
+- Opponents can exploit patterns
+- Should vary sizing by situation, not hand strength
+
+ADVANCED CONCEPTS:
+------------------
+
+POLARIZED RANGES:
+- Bet large with very strong hands and bluffs
+- Check with medium-strength hands
+- Forces difficult decisions
+
+MERGED RANGES:
+- Bet medium size with wide range of hands
+- Balanced between value and bluffs
+- Harder for opponents to exploit
+
+OVERBETTING:
+- Betting more than pot size
+- Puts maximum pressure on opponents
+- Use with nuts or as pure bluff

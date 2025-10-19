@@ -1,0 +1,62 @@
+[
+  {
+    "term": "VPIP",
+    "definition": "Voluntarily Put $ In Pot - Percentage of hands a player plays by calling or raising preflop",
+    "example": "A tight player might have a VPIP of 15%, while a loose player might have 40%"
+  },
+  {
+    "term": "PFR",
+    "definition": "Preflop Raise - Percentage of hands a player raises preflop",
+    "example": "An aggressive player with 20% VPIP and 16% PFR raises most hands they play"
+  },
+  {
+    "term": "Aggression Factor",
+    "definition": "(Bets + Raises) ÷ Calls - Measures how aggressive a player is postflop",
+    "example": "AF of 3.0 means the player bets/raises 3 times for every call"
+  },
+  {
+    "term": "Pot Odds",
+    "definition": "The ratio of the current pot size to the bet you must call",
+    "example": "If pot is $100 and you must call $25, you're getting 4:1 pot odds (20% equity needed)"
+  },
+  {
+    "term": "Equity",
+    "definition": "Your percentage chance of winning the hand if all cards were dealt out",
+    "example": "Pocket aces have about 85% equity against a random hand preflop"
+  },
+  {
+    "term": "Outs",
+    "definition": "Cards that will improve your hand to likely best hand",
+    "example": "With a flush draw, you typically have 9 outs (remaining cards of your suit)"
+  },
+  {
+    "term": "Position",
+    "definition": "Where you sit relative to the dealer button - affects betting order",
+    "example": "Late position (button/cutoff) is strongest, early position (UTG) is weakest"
+  },
+  {
+    "term": "Continuation Bet (C-bet)",
+    "definition": "Betting on the flop after you raised preflop",
+    "example": "You raise with AK, opponent calls, flop comes 9-7-2, you bet - that's a c-bet"
+  },
+  {
+    "term": "Bluff Catcher",
+    "definition": "A medium-strength hand that can only beat bluffs",
+    "example": "Third pair on a scary board - it beats bluffs but loses to value bets"
+  },
+  {
+    "term": "Nuts",
+    "definition": "The best possible hand given the board cards",
+    "example": "On a board of A-K-Q-J-10 rainbow, the nuts would be any straight"
+  },
+  {
+    "term": "Drawing Dead",
+    "definition": "Having no outs - no cards can improve your hand to win",
+    "example": "Having 7-2 against AA on a board of A-A-K-Q-J"
+  },
+  {
+    "term": "Implied Odds",
+    "definition": "Pot odds considering money you might win on future betting rounds",
+    "example": "Calling a small bet with a draw, expecting to win a big pot if you hit"
+  }
+]

@@ -1,0 +1,62 @@
+[
+  {
+    "title": "Position is Power",
+    "content": "Play more hands in late position (button and cutoff) and fewer hands in early position. Acting last gives you more information and control.",
+    "category": "fundamental",
+    "difficulty": "beginner"
+  },
+  {
+    "title": "Tight is Right (Usually)",
+    "content": "Play fewer, stronger hands. A common beginner mistake is playing too many hands. Start tight and loosen up as you improve.",
+    "category": "fundamental",
+    "difficulty": "beginner"
+  },
+  {
+    "title": "Pot Odds Are Your Friend",
+    "content": "Calculate pot odds to make mathematically sound decisions. If you need to call $10 into a $40 pot, you need 20% equity to break even.",
+    "category": "math",
+    "difficulty": "intermediate"
+  },
+  {
+    "title": "Aggression Pays",
+    "content": "Betting and raising is usually better than calling. You can win by making your opponent fold or by having the best hand at showdown.",
+    "category": "strategy",
+    "difficulty": "intermediate"
+  },
+  {
+    "title": "Watch Your Opponents",
+    "content": "Pay attention to betting patterns, timing tells, and opponent tendencies. Tight players rarely bluff, loose players call too often.",
+    "category": "psychology",
+    "difficulty": "intermediate"
+  },
+  {
+    "title": "Bankroll Management",
+    "content": "Never play with more than 5% of your bankroll at any single table. This protects you from going broke during bad runs.",
+    "category": "bankroll",
+    "difficulty": "beginner"
+  },
+  {
+    "title": "Value Betting",
+    "content": "When you have a strong hand, bet for value against weaker hands that might call. Size your bets to maximize profit from worse hands.",
+    "category": "betting",
+    "difficulty": "intermediate"
+  },
+  {
+    "title": "Bluffing Basics",
+    "content": "Bluff against tight players and on scary boards. Avoid bluffing calling stations (loose-passive players) who rarely fold.",
+    "category": "bluffing",
+    "difficulty": "intermediate"
+  },
+  {
+    "title": "Continuation Betting",
+    "content": "If you raised preflop, consider betting the flop (~70% of the time) even if you missed. Many opponents will fold weak hands.",
+    "category": "betting",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Hand Reading",
+    "content": "Try to put opponents on a range of hands, not just one specific hand. Consider their position, actions, and tendencies.",
+    "category": "advanced",
+    "difficulty": "advanced"
+  }
+]
