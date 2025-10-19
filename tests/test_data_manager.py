@@ -7,7 +7,8 @@ import json
 import os
 import tempfile
 from unittest.mock import patch, mock_open
-from src.data.manager import DataManager, Player
+from src.data.manager import DataManager
+from src.game.player import Player
 
 
 class TestDataManager:
@@ -21,9 +22,9 @@ class TestDataManager:
         
     def teardown_method(self):
         """Clean up temporary files."""
-        if os.path.exists(self.data_file):
-            os.remove(self.data_file)
-        os.rmdir(self.temp_dir)
+        import shutil
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
         
     def test_data_manager_creation(self):
         """Test creating a DataManager instance."""
