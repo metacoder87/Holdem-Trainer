@@ -4,7 +4,7 @@ Implements Player class for managing player state and actions.
 """
 from enum import Enum
 from typing import List, Optional, Tuple
-from src.game.card import Card
+from game.card import Card
 
 
 class PlayerAction(Enum):
@@ -19,7 +19,7 @@ class PlayerAction(Enum):
 class Player:
     """Represents a poker player."""
     
-    def __init__(self, name: str, bankroll: float):
+    def __init__(self, name: str, bankroll: int):
         """
         Initialize a player.
         
@@ -36,19 +36,20 @@ class Player:
             raise ValueError("Bankroll must be non-negative")
         
         self.name = name.strip()
-        self.bankroll = bankroll
+        self.bankroll = int(bankroll)
         self.hole_cards: List[Card] = []
         self.current_bet = 0
         self.total_bet = 0
         self.folded = False
         self.all_in = False
+        self.is_ai = False
         self.position = 0
         
         # Statistics tracking
         self.hands_played = 0
         self.hands_won = 0
         self.total_winnings = 0
-        self._initial_bankroll = bankroll
+        self._initial_bankroll = int(bankroll)
     
     def deal_hole_cards(self, cards: List[Card]):
         """
@@ -64,7 +65,7 @@ class Player:
             raise ValueError(f"Must deal exactly 2 hole cards, got {len(cards)}")
         self.hole_cards = cards.copy()
     
-    def place_bet(self, amount: float):
+    def place_bet(self, amount: int):
         """
         Place a bet.
         
@@ -82,8 +83,36 @@ class Player:
         self.bankroll -= amount
         self.current_bet += amount
         self.total_bet += amount
+        if self.bankroll == 0:
+            self.all_in = True
+
+    def pay_ante(self, amount: int) -> int:
+        """
+        Pay an ante (forced contribution) without counting it toward the current bet.
+
+        Antes go into the pot but do not affect the current betting level.
+
+        Args:
+            amount: Ante amount requested
+
+        Returns:
+            The amount actually paid (may be less if short-stacked)
+        """
+        if amount <= 0:
+            return 0
+
+        actual = min(int(amount), int(self.bankroll))
+        if actual <= 0:
+            return 0
+
+        self.bankroll -= actual
+        self.total_bet += actual
+        if self.bankroll == 0:
+            self.all_in = True
+
+        return actual
     
-    def add_to_bet(self, amount: float):
+    def add_to_bet(self, amount: int):
         """
         Add to existing bet (for raises).
         
@@ -92,7 +121,7 @@ class Player:
         """
         self.place_bet(amount)
     
-    def call(self, target_amount: float) -> float:
+    def call(self, target_amount: int) -> int:
         """
         Call a bet.
         
@@ -111,22 +140,24 @@ class Player:
             self.place_bet(actual_call)
         return actual_call
     
-    def raise_bet(self, current_bet: float, raise_to: float) -> float:
+    def raise_bet(self, raise_to: int) -> int:
         """
         Raise the bet.
         
         Args:
-            current_bet: Current bet amount
             raise_to: Amount to raise to
             
         Returns:
-            The raise amount
+            The amount added to the bet
         """
         amount_to_add = raise_to - self.current_bet
+        if amount_to_add <= 0:
+            raise ValueError("Raise amount must be greater than current bet")
+            
         self.place_bet(amount_to_add)
-        return raise_to - current_bet
+        return amount_to_add
     
-    def go_all_in(self) -> float:
+    def go_all_in(self) -> int:
         """
         Go all-in with remaining bankroll.
         
@@ -143,7 +174,7 @@ class Player:
         """Fold the hand."""
         self.folded = True
     
-    def can_bet(self, amount: float) -> bool:
+    def can_bet(self, amount: int) -> bool:
         """
         Check if player can bet the specified amount.
         
@@ -155,7 +186,7 @@ class Player:
         """
         return amount <= self.bankroll
     
-    def can_call(self, target_amount: float) -> bool:
+    def can_call(self, target_amount: int) -> bool:
         """
         Check if player can call to the target amount.
         
@@ -168,12 +199,11 @@ class Player:
         call_amount = target_amount - self.current_bet
         return call_amount <= self.bankroll
     
-    def can_raise(self, current_bet: float, raise_to: float) -> bool:
+    def can_raise(self, raise_to: int) -> bool:
         """
         Check if player can raise to specified amount.
         
         Args:
-            current_bet: Current bet amount
             raise_to: Amount to raise to
             
         Returns:
@@ -195,15 +225,15 @@ class Player:
         self.current_bet = 0
         # total_bet and bankroll remain unchanged
     
-    def add_winnings(self, amount: float):
+    def add_winnings(self, amount: int):
         """
         Add winnings to player's bankroll.
         
         Args:
             amount: Amount won
         """
-        self.bankroll += amount
-        self.total_winnings += amount
+        self.bankroll += int(amount)
+        self.total_winnings += int(amount)
     
     @property
     def is_active(self) -> bool:
@@ -211,12 +241,12 @@ class Player:
         return not self.folded and not self.all_in
     
     @property
-    def total_invested(self) -> float:
+    def total_invested(self) -> int:
         """Return total amount invested in current hand."""
         return self.total_bet
     
     @property
-    def net_position(self) -> float:
+    def net_position(self) -> int:
         """Calculate player's net position (current bankroll - initial + winnings - losses)."""
         return self.bankroll - self._initial_bankroll
     
@@ -228,7 +258,7 @@ class Player:
         if self.all_in:
             status.append("All-in")
         status_str = f" ({', '.join(status)})" if status else ""
-        return f"{self.name}: ${self.bankroll:.2f}{status_str}"
+        return f"{self.name}: ${self.bankroll:.0f}{status_str}"
     
     def __repr__(self) -> str:
         """Return repr representation of player."""

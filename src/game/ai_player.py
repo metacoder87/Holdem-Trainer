@@ -5,9 +5,13 @@ Implements different AI playing styles and decision-making logic.
 import random
 from enum import Enum
 from typing import Tuple, Dict, List, Optional
-from src.game.player import Player, PlayerAction
-from src.game.card import Card, Rank
-from src.game.hand import Hand
+from game.player import Player, PlayerAction
+from game.card import Card, Rank
+from game.hand import Hand
+
+
+def _round_to_nearest_5(amount):
+    return int(round(amount / 5)) * 5
 
 
 class AIStyle(Enum):
@@ -21,7 +25,7 @@ class AIStyle(Enum):
 class AIPlayer(Player):
     """Base class for AI players."""
     
-    def __init__(self, name: str, bankroll: float, ai_style: AIStyle):
+    def __init__(self, name: str, bankroll: int, ai_style: AIStyle):
         """
         Initialize an AI player.
         
@@ -30,7 +34,7 @@ class AIPlayer(Player):
             bankroll: Starting bankroll
             ai_style: The AI's playing style
         """
-        super().__init__(name, bankroll)
+        super().__init__(name, int(bankroll))
         self.ai_style = ai_style
         self.is_ai = True
     
@@ -58,7 +62,7 @@ class AIPlayer(Player):
 class CautiousAI(AIPlayer):
     """Cautious/tight AI player implementation."""
     
-    def __init__(self, name: str, bankroll: float):
+    def __init__(self, name: str, bankroll: int):
         """Initialize a cautious AI player."""
         super().__init__(name, bankroll, AIStyle.CAUTIOUS)
         self.fold_threshold = 0.35  # Fold 35% of the time with marginal hands
@@ -87,6 +91,10 @@ class CautiousAI(AIPlayer):
         # Position adjustment (late position is stronger)
         position_bonus = 0.05 * (self.position / 9)  # 0-5% bonus for position
         adjusted_strength = hand_strength + position_bonus
+
+        # All-in with very strong hand
+        if adjusted_strength > 0.95 and self.bankroll > 0:
+            return PlayerAction.ALL_IN, self.bankroll
         
         # Cautious preflop play
         if betting_round == 'preflop':
@@ -101,7 +109,9 @@ class CautiousAI(AIPlayer):
                 # Strong hand
                 if random.random() < 0.3:  # Occasionally raise with strong hands
                     raise_amount = min(current_bet + min_raise, self.bankroll * 0.1)
-                    return PlayerAction.RAISE, raise_amount
+                    raise_amount = _round_to_nearest_5(raise_amount)
+                    if raise_amount > current_bet:
+                        return PlayerAction.RAISE, raise_amount
                 return PlayerAction.CALL, current_bet
         
         # Post-flop play
@@ -112,7 +122,12 @@ class CautiousAI(AIPlayer):
                     # Sometimes bet with good hands
                     if random.random() < 0.4:
                         bet_amount = min(pot_size * 0.3, self.bankroll * 0.05)
-                        return PlayerAction.RAISE, bet_amount
+                        if bet_amount == 0 and pot_size == 0:
+                            bet_amount = game_state.get('big_blind', 10)
+                        
+                        bet_amount = _round_to_nearest_5(bet_amount)
+                        if bet_amount > 0:
+                            return PlayerAction.RAISE, bet_amount
                 return PlayerAction.CHECK, 0
             
             # Facing a bet
@@ -124,7 +139,9 @@ class CautiousAI(AIPlayer):
                 # Very strong hand, consider raising
                 if random.random() < 0.25:
                     raise_amount = min(current_bet + min_raise, self.bankroll * 0.1)
-                    return PlayerAction.RAISE, raise_amount
+                    raise_amount = _round_to_nearest_5(raise_amount)
+                    if raise_amount > current_bet:
+                        return PlayerAction.RAISE, raise_amount
             
             return PlayerAction.CALL, current_bet
     
@@ -200,7 +217,7 @@ class CautiousAI(AIPlayer):
 class WildAI(AIPlayer):
     """Wild/aggressive AI player implementation."""
     
-    def __init__(self, name: str, bankroll: float):
+    def __init__(self, name: str, bankroll: int):
         """Initialize a wild AI player."""
         super().__init__(name, bankroll, AIStyle.WILD)
         self.bluff_frequency = 0.25  # Bluff 25% of the time
@@ -223,18 +240,28 @@ class WildAI(AIPlayer):
         
         # Wild players are less concerned with hand strength
         aggression_roll = random.random()
+
+        # Chance to go all-in
+        if aggression_roll < 0.05 and self.bankroll > 0: # 5% chance to just shove it all in
+            return PlayerAction.ALL_IN, self.bankroll
         
         # Check if we can be aggressive
         if current_bet == 0:
             # No bet to face - bet/raise aggressively
             if aggression_roll < 0.6:  # 60% of the time, bet
                 bet_amount = min(pot_size * random.uniform(0.5, 1.2), self.bankroll * 0.2)
-                return PlayerAction.RAISE, bet_amount
+                if bet_amount == 0 and pot_size == 0:
+                    bet_amount = game_state.get('big_blind', 10)
+                
+                bet_amount = _round_to_nearest_5(bet_amount)
+                if bet_amount > 0:
+                    return PlayerAction.RAISE, bet_amount
             return PlayerAction.CHECK, 0
         
         # Facing a bet
         if aggression_roll < 0.3:  # 30% raise/re-raise
             raise_amount = min(current_bet * random.uniform(2, 3), self.bankroll * 0.3)
+            raise_amount = _round_to_nearest_5(raise_amount)
             if raise_amount > current_bet + min_raise:
                 return PlayerAction.RAISE, raise_amount
         
@@ -270,7 +297,7 @@ class WildAI(AIPlayer):
 class BalancedAI(AIPlayer):
     """Balanced/mathematical AI player implementation."""
     
-    def __init__(self, name: str, bankroll: float):
+    def __init__(self, name: str, bankroll: int):
         """Initialize a balanced AI player."""
         super().__init__(name, bankroll, AIStyle.BALANCED)
         self.pot_odds_threshold = 0.0
@@ -299,6 +326,10 @@ class BalancedAI(AIPlayer):
         
         # Position factor
         position_factor = self.position / 9
+
+        # Consider all-in with very high equity
+        if hand_equity > 0.9 and pot_odds < 0.5 and self.bankroll > 0:
+            return PlayerAction.ALL_IN, self.bankroll
         
         # Decision based on pot odds vs equity
         if current_bet == 0:
@@ -306,12 +337,22 @@ class BalancedAI(AIPlayer):
             if hand_equity > 0.6:
                 # Good hand, value bet
                 bet_size = pot_size * (0.5 + hand_equity * 0.5)
-                return PlayerAction.RAISE, min(bet_size, self.bankroll * 0.15)
+                if bet_size == 0 and pot_size == 0:
+                    bet_size = game_state.get('big_blind', 10)
+                
+                bet_size = _round_to_nearest_5(min(bet_size, self.bankroll * 0.15))
+                if bet_size > 0:
+                    return PlayerAction.RAISE, bet_size
             elif hand_equity > 0.4 and position_factor > 0.6:
                 # Decent hand in position, sometimes bet
                 if random.random() < 0.3:
                     bet_size = pot_size * 0.3
-                    return PlayerAction.RAISE, min(bet_size, self.bankroll * 0.1)
+                    if bet_size == 0 and pot_size == 0:
+                        bet_size = game_state.get('big_blind', 10)
+                    
+                    bet_size = _round_to_nearest_5(min(bet_size, self.bankroll * 0.1))
+                    if bet_size > 0:
+                        return PlayerAction.RAISE, bet_size
             return PlayerAction.CHECK, 0
         
         # Facing a bet - compare pot odds to equity
@@ -319,7 +360,9 @@ class BalancedAI(AIPlayer):
             # Strong equity advantage, consider raising
             if random.random() < hand_equity * 0.5:
                 raise_amount = current_bet + min_raise * (1 + hand_equity)
-                return PlayerAction.RAISE, min(raise_amount, self.bankroll * 0.2)
+                raise_amount = _round_to_nearest_5(min(raise_amount, self.bankroll * 0.2))
+                if raise_amount > current_bet:
+                    return PlayerAction.RAISE, raise_amount
             return PlayerAction.CALL, current_bet
         elif hand_equity > pot_odds - 0.05:
             # Close decision, usually call
@@ -413,7 +456,7 @@ class BalancedAI(AIPlayer):
 class RandomAI(AIPlayer):
     """Random/unpredictable AI player implementation."""
     
-    def __init__(self, name: str, bankroll: float):
+    def __init__(self, name: str, bankroll: int):
         """Initialize a random AI player."""
         super().__init__(name, bankroll, AIStyle.RANDOM)
         self.randomness_factor = 0.8  # 80% random decisions
@@ -434,6 +477,10 @@ class RandomAI(AIPlayer):
         
         # Random decision
         decision_roll = random.random()
+
+        # Chance to go all-in
+        if decision_roll < 0.02 and self.bankroll > 0: # 2% chance to just shove it all in
+            return PlayerAction.ALL_IN, self.bankroll
         
         if current_bet == 0:
             # Can check or bet
@@ -442,7 +489,7 @@ class RandomAI(AIPlayer):
             else:
                 # Random bet size
                 bet_size = random.uniform(0.1, 0.5) * pot_size if pot_size > 0 else 10
-                bet_size = min(bet_size, self.bankroll * 0.2)
+                bet_size = _round_to_nearest_5(min(bet_size, self.bankroll * 0.2))
                 return PlayerAction.RAISE, bet_size
         else:
             # Facing a bet
@@ -454,13 +501,13 @@ class RandomAI(AIPlayer):
                 # Random raise
                 raise_multiplier = random.uniform(1.5, 3)
                 raise_amount = current_bet * raise_multiplier
-                raise_amount = min(raise_amount, self.bankroll * 0.3)
+                raise_amount = _round_to_nearest_5(min(raise_amount, self.bankroll * 0.3))
                 if raise_amount > current_bet + min_raise:
                     return PlayerAction.RAISE, raise_amount
                 return PlayerAction.CALL, current_bet
 
 
-def create_ai_player(name: str, bankroll: float, style: AIStyle) -> AIPlayer:
+def create_ai_player(name: str, bankroll: int, style: AIStyle) -> AIPlayer:
     """
     Factory function to create AI players.
     
@@ -484,7 +531,7 @@ def create_ai_player(name: str, bankroll: float, style: AIStyle) -> AIPlayer:
         raise ValueError(f"Unknown AI style: {style}")
 
 
-def create_ai_players_for_table(count: int, bankroll: float) -> List[AIPlayer]:
+def create_ai_players_for_table(count: int, bankroll: int) -> List[AIPlayer]:
     """
     Create multiple AI players with mixed styles.
     

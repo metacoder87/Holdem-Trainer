@@ -6,7 +6,7 @@ from enum import Enum
 from typing import List, Tuple, Optional
 from collections import Counter
 from itertools import combinations
-from src.game.card import Card, Rank
+from game.card import Card, Rank
 
 
 class HandRank(Enum):

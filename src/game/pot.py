@@ -4,13 +4,13 @@ Implements pot management including side pots.
 """
 from typing import List, Dict, Optional
 from collections import defaultdict
-from src.game.player import Player
+from game.player import Player
 
 
 class SidePot:
     """Represents a side pot in a poker game."""
     
-    def __init__(self, amount: float, eligible_players: List[Player]):
+    def __init__(self, amount: int, eligible_players: List[Player]):
         """
         Initialize a side pot.
         
@@ -21,7 +21,7 @@ class SidePot:
         self.amount = amount
         self.eligible_players = eligible_players.copy()
     
-    def distribute(self, winners: List[Player]) -> Dict[Player, float]:
+    def distribute(self, winners: List[Player]) -> Dict[Player, int]:
         """
         Distribute the side pot to eligible winners.
         
@@ -37,17 +37,21 @@ class SidePot:
             return {}
         
         # Split pot evenly among eligible winners
-        amount_per_winner = self.amount / len(eligible_winners)
+        num_winners = len(eligible_winners)
+        amount_per_winner = self.amount // num_winners
+        remainder = self.amount % num_winners
         
-        winnings = {}
-        for winner in eligible_winners:
-            winnings[winner] = amount_per_winner
+        winnings = {winner: amount_per_winner for winner in eligible_winners}
+        
+        # Distribute remainder
+        for i in range(remainder):
+            winnings[eligible_winners[i]] += 1
         
         return winnings
     
     def __str__(self) -> str:
         """Return string representation of side pot."""
-        return f"SidePot: ${self.amount:.2f} ({len(self.eligible_players)} players eligible)"
+        return f"SidePot: ${self.amount:.0f} ({len(self.eligible_players)} players eligible)"
 
 
 class Pot:
@@ -55,13 +59,13 @@ class Pot:
     
     def __init__(self):
         """Initialize an empty pot."""
-        self.total = 0.0
-        self.main_pot = 0.0
+        self.total = 0
+        self.main_pot = 0
         self.side_pots: List[SidePot] = []
-        self.player_contributions: Dict[Player, float] = defaultdict(float)
+        self.player_contributions: Dict[Player, int] = defaultdict(int)
         self.eligible_players: List[Player] = []
     
-    def add_bet(self, player: Player, amount: float):
+    def add_bet(self, player: Player, amount: int):
         """
         Add a bet to the pot.
         
@@ -76,7 +80,7 @@ class Pot:
         if player not in self.eligible_players:
             self.eligible_players.append(player)
     
-    def get_player_contribution(self, player: Player) -> float:
+    def get_player_contribution(self, player: Player) -> int:
         """
         Get a player's total contribution to the pot.
         
@@ -86,7 +90,7 @@ class Pot:
         Returns:
             The player's total contribution
         """
-        return self.player_contributions.get(player, 0.0)
+        return self.player_contributions.get(player, 0)
     
     def create_side_pots(self):
         """Create side pots when players are all-in for different amounts."""
@@ -95,34 +99,39 @@ class Pot:
         
         # Reset side pots
         self.side_pots = []
-        
-        # Get all contribution amounts and sort them
-        contribution_levels = sorted(set(self.player_contributions.values()))
-        
+
+        # Build sorted unique contribution levels (ascending)
+        levels = sorted(set(self.player_contributions.values()))
+
+        # We'll compute pots by taking the delta between contribution levels
         last_level = 0
-        for level in contribution_levels:
-            # Find players eligible for this pot level
-            eligible = [p for p, amt in self.player_contributions.items() 
-                       if amt >= level]
-            
-            if eligible:
-                # Calculate pot for this level
-                pot_amount = (level - last_level) * len(eligible)
-                
-                if last_level == 0:
-                    # This is the main pot
-                    self.main_pot = pot_amount
-                else:
-                    # This is a side pot  
-                    side_pot = SidePot(pot_amount, eligible)
-                    self.side_pots.append(side_pot)
-                
-                last_level = level
-        
+        main_pot = 0
+        side_pots: List[SidePot] = []
+
+        for level in levels:
+            # Players who have contributed at least this level
+            eligible = [p for p, amt in self.player_contributions.items() if amt >= level]
+            if not eligible:
+                continue
+
+            delta = level - last_level
+            pot_amount = delta * len(eligible)
+
+            if last_level == 0:
+                # first chunk is main pot
+                main_pot = pot_amount
+            else:
+                side_pots.append(SidePot(pot_amount, eligible))
+
+            last_level = level
+
+        self.main_pot = main_pot
+        self.side_pots = side_pots
+
         # Recalculate total
-        self.total = self.main_pot + sum(sp.amount for sp in self.side_pots)
+        self.total = int(self.main_pot + sum(sp.amount for sp in self.side_pots))
     
-    def distribute(self, winners: List[Player]) -> Dict[Player, float]:
+    def distribute(self, winners: List[Player]) -> Dict[Player, int]:
         """
         Distribute the pot to winners.
         
@@ -135,30 +144,110 @@ class Pot:
         if not winners:
             return {}
         
-        all_winnings = defaultdict(float)
-        
-        # Distribute main pot
-        if self.main_pot > 0:
-            amount_per_winner = self.main_pot / len(winners)
-            for winner in winners:
-                all_winnings[winner] += amount_per_winner
+        all_winnings = defaultdict(int)
+
+        # Distribute main pot: winners eligible for main pot split it
+        eligible_main_winners = [w for w in winners if w in self.eligible_players]
+        if self.main_pot > 0 and eligible_main_winners:
+            num_winners = len(eligible_main_winners)
+            amount_per = self.main_pot // num_winners
+            remainder = self.main_pot % num_winners
+            for i, w in enumerate(eligible_main_winners):
+                win_amount = amount_per + (1 if i < remainder else 0)
+                all_winnings[w] += win_amount
             self.main_pot = 0
-        
-        # Distribute side pots
+
+        # Distribute each side pot separately considering eligible players
         for side_pot in self.side_pots:
-            side_winnings = side_pot.distribute(winners)
-            for player, amount in side_winnings.items():
-                all_winnings[player] += amount
-        
+            # Find winners eligible for this side pot
+            eligible = [w for w in winners if w in side_pot.eligible_players]
+            if not eligible:
+                continue
+            num_winners = len(eligible)
+            amount_per = side_pot.amount // num_winners
+            remainder = side_pot.amount % num_winners
+            for i, w in enumerate(eligible):
+                win_amount = amount_per + (1 if i < remainder else 0)
+                all_winnings[w] += win_amount
+
         # Clear the pot
         self.total = 0
         self.side_pots = []
         self.player_contributions.clear()
         self.eligible_players = []
-        
+
+        return dict(all_winnings)
+
+    def distribute_to_winners(self, player_best_hands: Dict[Player, object]) -> Dict[Player, int]:
+        """
+        Distribute main pot and side pots to winners determined per-pot using
+        the provided best-hand objects for each player.
+
+        Args:
+            player_best_hands: Mapping of Player -> Hand (best 5-card hand)
+
+        Returns:
+            Dictionary mapping Player -> winnings amount
+        """
+        if not player_best_hands:
+            return {}
+
+        all_winnings = defaultdict(int)
+
+        # Distribute main pot
+        main_eligible = [p for p in self.eligible_players if p in player_best_hands]
+        if self.main_pot > 0 and main_eligible:
+            # Determine best hand among eligible players
+            best_hand = None
+            best_players = []
+            for p in main_eligible:
+                ph = player_best_hands[p]
+                if best_hand is None or ph > best_hand:
+                    best_hand = ph
+                    best_players = [p]
+                elif ph == best_hand:
+                    best_players.append(p)
+
+            num_winners = len(best_players)
+            amount_per = self.main_pot // num_winners
+            remainder = self.main_pot % num_winners
+            for i, w in enumerate(best_players):
+                win_amount = amount_per + (1 if i < remainder else 0)
+                all_winnings[w] += win_amount
+            self.main_pot = 0
+
+        # Distribute side pots
+        for side_pot in self.side_pots:
+            eligible = [p for p in side_pot.eligible_players if p in player_best_hands]
+            if not eligible:
+                continue
+
+            best_hand = None
+            best_players = []
+            for p in eligible:
+                ph = player_best_hands[p]
+                if best_hand is None or ph > best_hand:
+                    best_hand = ph
+                    best_players = [p]
+                elif ph == best_hand:
+                    best_players.append(p)
+
+            num_winners = len(best_players)
+            amount_per = side_pot.amount // num_winners
+            remainder = side_pot.amount % num_winners
+            for i, w in enumerate(best_players):
+                win_amount = amount_per + (1 if i < remainder else 0)
+                all_winnings[w] += win_amount
+
+        # Clear the pot
+        self.total = 0
+        self.side_pots = []
+        self.player_contributions.clear()
+        self.eligible_players = []
+
         return dict(all_winnings)
     
-    def get_pot_odds(self, bet_amount: float) -> float:
+    def get_pot_odds(self, bet_amount: int) -> float:
         """
         Calculate pot odds for a bet.
         
@@ -173,7 +262,7 @@ class Pot:
         
         return bet_amount / (self.total + bet_amount)
     
-    def calculate_rake(self, rate: float = 0.05, cap: float = 25.0) -> float:
+    def calculate_rake(self, rate: float = 0.05, cap: int = 25) -> int:
         """
         Calculate rake for cash games.
         
@@ -185,19 +274,19 @@ class Pot:
             The rake amount
         """
         rake = self.total * rate
-        return min(rake, cap)
+        return min(int(rake), cap)
     
     def reset(self):
         """Reset the pot for a new hand."""
-        self.total = 0.0
-        self.main_pot = 0.0
+        self.total = 0
+        self.main_pot = 0
         self.side_pots = []
         self.player_contributions.clear()
         self.eligible_players = []
     
     def __str__(self) -> str:
         """Return string representation of pot."""
-        return f"Pot: ${self.total:.2f}"
+        return f"Pot: ${self.total:.0f}"
     
     def __repr__(self) -> str:
         """Return repr representation of pot."""

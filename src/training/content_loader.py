@@ -404,3 +404,141 @@ class ContentLoader:
         """Get a specific cheat sheet by name."""
         cheat_sheets = self.load_cheat_sheets()
         return cheat_sheets.get(sheet_name)
+
+    def get_contextual_content(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get context-aware educational content based on game situation.
+        
+        Args:
+            context: Dictionary describing the current situation
+            
+        Returns:
+            Dictionary with relevant educational content
+        """
+        situation = context.get('situation', '')
+        weakness = context.get('weakness')
+        
+        content = {
+            'explanation': '',
+            'reference': '',
+            'actionable_advice': []
+        }
+        
+        # Map situations to content
+        if 'facing_bet' in situation and weakness:
+            if weakness.value == 'poor_pot_odds':
+                pot_odds = context.get('pot_odds', 0)
+                content['explanation'] = f"You're getting {pot_odds:.1f}:1 pot odds."
+                content['reference'] = self.extract_relevant_quote('pot_odds', 'facing_bet')
+                content['actionable_advice'] = [
+                    "Calculate your outs",
+                    "Compare pot odds to odds of hitting",
+                    "Consider implied odds for future streets"
+                ]
+                
+        return content
+        
+    def extract_relevant_quote(self, topic: str, situation: str) -> str:
+        """
+        Extract relevant quote from educational files.
+        
+        Args:
+            topic: The educational topic
+            situation: The specific situation
+            
+        Returns:
+            Relevant text quote
+        """
+        # Load pot odds reference if needed
+        if topic == 'pot_odds':
+            try:
+                content = self.pot_odds_ref
+                # Extract relevant section
+                if 'facing_bet' in situation:
+                    # Find section about calling bets
+                    for line in content.split('\n'):
+                        if 'calling' in line.lower() and ('bet' in line.lower() or 'odds' in line.lower()):
+                            return line.strip()
+            except:
+                pass
+                
+        return "Study the fundamentals of " + topic.replace('_', ' ')
+        
+    def link_mistake_to_content(self, mistake: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Link an identified mistake to specific educational content.
+        
+        Args:
+            mistake: Dictionary describing the mistake
+            
+        Returns:
+            Dictionary with explanation and study recommendations
+        """
+        mistake_type = mistake.get('type', '')
+        
+        content = {
+            'explanation': '',
+            'relevant_section': '',
+            'study_recommendation': ''
+        }
+        
+        if mistake_type == 'poor_call':
+            pot_odds_req = mistake.get('pot_odds_required', 0)
+            pot_odds_actual = mistake.get('pot_odds_actual', 0)
+            
+            content['explanation'] = (
+                f"This call required {pot_odds_req:.1f}:1 pot odds, "
+                f"but you only had {pot_odds_actual:.1f}:1. "
+                f"This makes it a -EV (negative expected value) call."
+            )
+            
+            content['relevant_section'] = self.extract_relevant_quote('pot_odds', 'poor_call')
+            
+            content['study_recommendation'] = (
+                "Review pot odds calculation in the educational content. "
+                "Practice: When facing a bet, always calculate pot odds before calling."
+            )
+            
+        elif mistake_type == 'missed_value_bet':
+            content['explanation'] = (
+                "You checked with a strong hand when you should have bet for value. "
+                "This loses you money when opponents would call with worse hands."
+            )
+            content['study_recommendation'] = "Study: Value betting and bet sizing strategy"
+            
+        return content
+        
+    def generate_inline_tip(self, game_state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate inline tips during gameplay based on current situation.
+        
+        Args:
+            game_state: Current game state information
+            
+        Returns:
+            Dictionary with tip message and source
+        """
+        pot_size = game_state.get('pot_size', 0)
+        bet_to_call = game_state.get('bet_to_call', 0)
+        position = game_state.get('position', '')
+        
+        tip = {
+            'message': '',
+            'source': 'general',
+            'priority': 'low'
+        }
+        
+        # Pot odds tip
+        if bet_to_call > 0:
+            pot_odds = pot_size / bet_to_call
+            tip['message'] = f"💡 Pot odds: {pot_odds:.1f}:1 - You need to win {1/(pot_odds+1)*100:.0f}% of the time to break even"
+            tip['source'] = 'pot_odds_reference'
+            tip['priority'] = 'high'
+            
+        # Position tip
+        elif position in ['button', 'cutoff']:
+            tip['message'] = "💡 You're in late position - you can play a wider range of hands"
+            tip['source'] = 'strategy_guides'
+            tip['priority'] = 'medium'
+            
+        return tip
