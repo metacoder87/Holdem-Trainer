@@ -3,8 +3,8 @@ Test suite for Deck class.
 Tests deck creation, shuffling, and card dealing functionality.
 """
 import pytest
-from src.game.deck import Deck
-from src.game.card import Card, Suit, Rank
+from game.deck import Deck
+from game.card import Card, Suit, Rank
 
 
 class TestDeck:

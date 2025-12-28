@@ -4,10 +4,10 @@ Tests AI decision making, different playing styles, and behavior patterns.
 """
 import pytest
 from unittest.mock import Mock, patch
-from src.game.ai_player import AIPlayer, AIStyle, CautiousAI, WildAI, BalancedAI, RandomAI
-from src.game.player import PlayerAction
-from src.game.card import Card, Suit, Rank
-from src.game.hand import Hand, HandRank
+from game.ai_player import AIPlayer, AIStyle, CautiousAI, WildAI, BalancedAI, RandomAI
+from game.player import PlayerAction
+from game.card import Card, Suit, Rank
+from game.hand import Hand, HandRank
 
 
 class TestAIStyle:
@@ -394,7 +394,7 @@ class TestAIPlayerFactory:
     
     def test_create_ai_players(self):
         """Test creating different types of AI players."""
-        from src.game.ai_player import create_ai_player
+        from game.ai_player import create_ai_player
         
         cautious = create_ai_player("Cautious_Bot", 1000, AIStyle.CAUTIOUS)
         wild = create_ai_player("Wild_Bot", 1000, AIStyle.WILD)
@@ -408,7 +408,7 @@ class TestAIPlayerFactory:
         
     def test_create_mixed_ai_table(self):
         """Test creating a table with mixed AI personalities."""
-        from src.game.ai_player import create_ai_players_for_table
+        from game.ai_player import create_ai_players_for_table
         
         ai_players = create_ai_players_for_table(6, 1000)
         
@@ -456,7 +456,7 @@ class TestAIPlayerIntegration:
         if preflop_decision == PlayerAction.CALL:
             ai.call(20)
         else:
-            ai.raise_bet(20, preflop_amount)
+            ai.raise_bet(preflop_amount)
             
         # Flop
         ai.reset_for_new_round()

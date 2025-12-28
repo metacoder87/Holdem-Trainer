@@ -4,12 +4,12 @@ Tests interactive poker education, quizzes, and analysis systems.
 """
 import pytest
 from unittest.mock import Mock, patch
-from src.training.trainer import PokerTrainer, QuizType
-from src.training.analyzer import HandAnalyzer, SessionReviewer
-from src.training.hud import TrainerHUD
-from src.game.player import Player, PlayerAction
-from src.game.card import Card, Suit, Rank
-from src.game.pot import Pot
+from training.trainer import PokerTrainer, QuizType
+from training.analyzer import HandAnalyzer, SessionReviewer
+from training.hud import TrainerHUD
+from game.player import Player, PlayerAction
+from game.card import Card, Suit, Rank
+from game.pot import Pot
 
 
 class TestPokerTrainer:
@@ -394,7 +394,7 @@ class TestTrainingIntegration:
         
     def test_educational_content_loading(self):
         """Test loading educational content and tips."""
-        from src.training.content_loader import ContentLoader
+        from training.content_loader import ContentLoader
         
         loader = ContentLoader()
         

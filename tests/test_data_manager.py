@@ -7,8 +7,8 @@ import json
 import os
 import tempfile
 from unittest.mock import patch, mock_open
-from src.data.manager import DataManager
-from src.game.player import Player
+from data.manager import DataManager
+from game.player import Player
 
 
 class TestDataManager:
@@ -361,3 +361,58 @@ class TestDataManager:
             
             with pytest.raises(OSError):
                 self.manager.save_players()
+
+    def test_append_and_load_hand_history(self):
+        """Hand histories append as JSONL and load back in order."""
+        hand1 = {
+            "hand_number": 1,
+            "actions": [
+                {
+                    "player": "TestPlayer",
+                    "action": "call",
+                    "amount": 10,
+                    "pot_before": 0,
+                    "betting_round": "preflop",
+                    "did_raise": False,
+                }
+            ],
+            "winners": ["TestPlayer"],
+            "pot_total": 20,
+        }
+        hand2 = {
+            "hand_number": 2,
+            "actions": [
+                {
+                    "player": "TestPlayer",
+                    "action": "raise",
+                    "amount": 20,
+                    "pot_before": 20,
+                    "betting_round": "preflop",
+                    "did_raise": True,
+                }
+            ],
+            "winners": ["AI_1"],
+            "pot_total": 60,
+        }
+
+        path = self.manager.append_hand_history("TestPlayer", hand1)
+        assert os.path.exists(path)
+        assert path.endswith(".jsonl")
+        assert os.path.dirname(path) == self.manager.hand_history_dir
+
+        self.manager.append_hand_history("TestPlayer", hand2)
+
+        newest_first = self.manager.load_hand_history("TestPlayer", limit=10, reverse=True)
+        assert [h.get("hand_number") for h in newest_first[:2]] == [2, 1]
+
+        oldest_first = self.manager.load_hand_history("TestPlayer", limit=10, reverse=False)
+        assert [h.get("hand_number") for h in oldest_first[:2]] == [1, 2]
+
+    def test_load_hand_history_missing_file(self):
+        """Missing hand history file returns empty list."""
+        assert self.manager.load_hand_history("MissingPlayer", limit=10, reverse=True) == []
+
+    def test_append_hand_history_rejects_non_dict(self):
+        """Non-dict hand payloads are rejected."""
+        with pytest.raises(ValueError):
+            self.manager.append_hand_history("TestPlayer", ["not", "a", "dict"])  # type: ignore[arg-type]
