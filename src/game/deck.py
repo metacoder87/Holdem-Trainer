@@ -4,7 +4,7 @@ Implements Deck class for managing a 52-card deck.
 """
 import random
 from typing import List, Optional
-from src.game.card import Card, Suit, Rank
+from game.card import Card, Suit, Rank
 
 
 class Deck:

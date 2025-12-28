@@ -6,8 +6,8 @@ import math
 from typing import List, Tuple, Dict, Optional
 from collections import Counter
 from itertools import combinations
-from src.game.card import Card, Rank
-from src.game.hand import Hand, HandRank
+from game.card import Card, Rank
+from game.hand import Hand, HandRank
 
 
 class PotOddsCalculator:

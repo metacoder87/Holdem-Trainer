@@ -3,8 +3,8 @@ Hand and Session Analyzer for PyHoldem Pro Training Mode.
 Provides post-hand analysis and session reviews with actionable feedback.
 """
 from typing import Dict, List, Any, Tuple, Optional
-from src.game.player import PlayerAction
-from src.stats.calculator import PotOddsCalculator
+from game.player import PlayerAction
+from stats.calculator import PotOddsCalculator
 
 
 class HandAnalyzer:
@@ -226,9 +226,10 @@ class HandAnalyzer:
         
     def _generate_hand_summary(self, hand_data: Dict[str, Any]) -> str:
         """Generate a brief summary of the hand."""
+        hero_name = hand_data.get('hero_name') or hand_data.get('player_name') or 'User'
         winner = hand_data.get('winner', 'Unknown')
         final_pot = hand_data.get('final_pot', 0)
-        user_result = 'won' if winner == 'User' else 'lost'
+        user_result = 'won' if winner == hero_name else 'lost'
         
         return (
             f"Hand Summary: You {user_result} this hand. "
@@ -239,9 +240,10 @@ class HandAnalyzer:
         """Analyze the key decisions made during the hand."""
         actions = hand_data.get('actions', [])
         key_decisions = []
+        hero_name = hand_data.get('hero_name') or hand_data.get('player_name') or 'User'
         
         for i, action_data in enumerate(actions):
-            if action_data.get('player') == 'User':
+            if action_data.get('player') == hero_name:
                 decision_analysis = {
                     'street': self._determine_street(i, len(actions)),
                     'action': action_data.get('action'),
@@ -274,9 +276,10 @@ class HandAnalyzer:
     def _extract_learning_points(self, hand_data: Dict[str, Any]) -> List[str]:
         """Extract key learning points from the hand."""
         learning_points = []
+        hero_name = hand_data.get('hero_name') or hand_data.get('player_name') or 'User'
         
         # Add generic learning points based on hand outcome
-        if hand_data.get('winner') != 'User':
+        if hand_data.get('winner') != hero_name:
             learning_points.append(
                 "💡 Consider your opponent's likely holdings when making decisions."
             )
@@ -296,7 +299,8 @@ class HandAnalyzer:
     def _rate_hand_performance(self, hand_data: Dict[str, Any]) -> Dict[str, Any]:
         """Rate the player's overall performance in the hand."""
         # Simplified rating system
-        user_won = hand_data.get('winner') == 'User'
+        hero_name = hand_data.get('hero_name') or hand_data.get('player_name') or 'User'
+        user_won = hand_data.get('winner') == hero_name
         user_strength = hand_data.get('user_hand_strength', 0.5)
         
         if user_won:

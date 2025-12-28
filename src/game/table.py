@@ -4,7 +4,7 @@ Implements table management, seating, and position handling.
 """
 from enum import Enum
 from typing import List, Optional, Dict, Any
-from src.game.player import Player
+from game.player import Player
 
 
 class TableType(Enum):
@@ -146,6 +146,15 @@ class Table:
             List of players still in hand
         """
         return [player for player in self.get_players_in_order() if not player.folded]
+
+    def get_players_in_tournament(self) -> List[Player]:
+        """
+        Get all players still in the tournament (bankroll > 0).
+
+        Returns:
+            List of players still in the tournament
+        """
+        return [player for player in self.get_players_in_order() if player.bankroll > 0]
     
     def rotate_dealer_button(self):
         """Rotate the dealer button to the next active player."""
@@ -261,6 +270,18 @@ class Table:
             if seat == player:
                 return i
         return None
+
+    def get_player_position(self, player: Player) -> Optional[int]:
+        """
+        Get the position (seat index) of a player.
+
+        Args:
+            player: The player to find
+
+        Returns:
+            The seat index (0-8) or None if not found
+        """
+        return self.get_seat_number(player)
     
     def is_full(self) -> bool:
         """Check if the table is full."""

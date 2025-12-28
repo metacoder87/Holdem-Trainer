@@ -19,11 +19,7 @@ if requirements_file.exists():
     requirements = [req for req in requirements if req and not req.startswith('#')]
 else:
     requirements = [
-        "pytest>=7.4.0",
-        "pytest-cov>=4.1.0", 
-        "colorama>=0.4.6",
         "rich>=13.4.2",
-        "click>=8.1.6",
         "jsonschema>=4.18.4"
     ]
 
@@ -38,6 +34,7 @@ setup(
     url="https://github.com/pyholdem-pro/pyholdem-pro",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
+    py_modules=["main"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: End Users/Desktop",
@@ -58,6 +55,7 @@ setup(
         "dev": [
             "pytest>=7.4.0",
             "pytest-cov>=4.1.0",
+            "pytest-mock>=3.11.0",
             "black>=23.0.0",
             "flake8>=6.0.0",
             "mypy>=1.4.0",

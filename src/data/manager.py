@@ -2,8 +2,10 @@
 Data Manager module for PyHoldem Pro.
 Handles JSON file operations for player data persistence.
 """
+import hashlib
 import json
 import os
+import re
 import threading
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -32,24 +34,147 @@ class DataManager:
         "additionalProperties": True
     }
     
-    def __init__(self, data_file: str = "data/players.json"):
+    def __init__(
+        self,
+        data_file: str = "data/players.json",
+        *,
+        hand_history_dir: Optional[str] = None,
+    ):
         """
         Initialize the data manager.
         
         Args:
             data_file: Path to the JSON data file
+            hand_history_dir: Optional directory for per-player JSONL hand histories
         """
         self.data_file = data_file
+        base_dir = os.path.dirname(os.path.abspath(data_file))
+        self.hand_history_dir = hand_history_dir or os.path.join(base_dir, "hand_histories")
         self.players_data: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.RLock()  # Thread-safe operations
         
         # Ensure data directory exists
-        os.makedirs(os.path.dirname(data_file), exist_ok=True)
+        os.makedirs(base_dir, exist_ok=True)
         
         # Load existing data
         self.load_players()
+
+    def _hand_history_path_for_player(self, name: str) -> str:
+        normalized = (name or "").strip()
+        if not normalized:
+            raise ValueError("Player name cannot be empty")
+
+        slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", normalized).strip("_")
+        if not slug:
+            slug = "player"
+
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:10]
+        filename = f"{slug}__{digest}.jsonl"
+        return os.path.join(self.hand_history_dir, filename)
+
+    def append_hand_history(self, player_name: str, hand_record: Dict[str, Any]) -> str:
+        """
+        Append a single hand record to a per-player JSONL hand history file.
+
+        Args:
+            player_name: Player name
+            hand_record: JSON-serializable hand record (dict)
+
+        Returns:
+            Path to the JSONL history file written.
+        """
+        if not isinstance(hand_record, dict):
+            raise ValueError("Hand record must be a dictionary")
+
+        with self._lock:
+            path = self._hand_history_path_for_player(player_name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+
+            payload = dict(hand_record)
+            payload.setdefault("schema_version", 1)
+            payload.setdefault("saved_at", datetime.now().isoformat())
+
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+            return path
+
+    def _read_last_jsonl_lines(self, path: str, limit: int) -> List[str]:
+        if limit <= 0:
+            return []
+
+        # Read from the end of the file in chunks until we have enough lines.
+        chunk_size = 8192
+        lines: List[bytes] = []
+        buffer = b""
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            position = f.tell()
+
+            while position > 0 and len(lines) <= limit:
+                read_size = min(chunk_size, position)
+                position -= read_size
+                f.seek(position)
+                chunk = f.read(read_size)
+                buffer = chunk + buffer
+                lines = buffer.splitlines()
+
+        tail = lines[-limit:]
+        decoded: List[str] = []
+        for raw in tail:
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                text = raw.decode("utf-8", errors="replace")
+            if text.strip():
+                decoded.append(text)
+        return decoded
+
+    def load_hand_history(
+        self,
+        player_name: str,
+        *,
+        limit: int = 200,
+        reverse: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """
+        Load a player's hand history from their JSONL file.
+
+        Args:
+            player_name: Player name
+            limit: Maximum number of hands to return (most recent if reverse=True)
+            reverse: If True, return newest-first; otherwise oldest-first
+
+        Returns:
+            List of hand record dictionaries.
+        """
+        with self._lock:
+            path = self._hand_history_path_for_player(player_name)
+            if not os.path.exists(path):
+                return []
+
+            if limit <= 0:
+                return []
+
+            try:
+                lines = self._read_last_jsonl_lines(path, limit)
+            except OSError:
+                return []
+
+            records: List[Dict[str, Any]] = []
+            for line in lines:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict):
+                    records.append(record)
+
+            if reverse:
+                records.reverse()
+            return records
     
-    def create_player(self, name: str, initial_bankroll: float) -> Dict[str, Any]:
+    def create_player(self, name: str, initial_bankroll: int) -> Dict[str, Any]:
         """
         Create a new player profile.
         
@@ -78,7 +203,7 @@ class DataManager:
             now = datetime.now().isoformat()
             player_data = {
                 "name": name,
-                "bankroll": initial_bankroll,
+                "bankroll": int(initial_bankroll),
                 "created_at": now,
                 "last_played": now,
                 "games_played": 0,
@@ -123,7 +248,7 @@ class DataManager:
         with self._lock:
             return name.strip() in self.players_data if name else False
     
-    def update_player_bankroll(self, name: str, new_bankroll: float):
+    def update_player_bankroll(self, name: str, new_bankroll: int):
         """
         Update a player's bankroll.
         
@@ -141,7 +266,7 @@ class DataManager:
             if name not in self.players_data:
                 raise ValueError(f"Player '{name}' not found")
             
-            self.players_data[name]["bankroll"] = new_bankroll
+            self.players_data[name]["bankroll"] = int(new_bankroll)
             self.players_data[name]["last_played"] = datetime.now().isoformat()
     
     def update_player_stats(self, name: str, stats: Dict[str, Any]):
@@ -164,6 +289,31 @@ class DataManager:
                 self.players_data[name][key] = value
             
             self.players_data[name]["last_played"] = datetime.now().isoformat()
+    
+    def save_player(self, player):
+        """
+        Save/update a player object to the data store.
+        
+        Args:
+            player: Player object with name and bankroll attributes
+        """
+        # Update player statistics (if available on the object)
+        stats: Dict[str, Any] = {}
+        for attr in ("hands_played", "hands_won", "total_winnings"):
+            if hasattr(player, attr):
+                stats[attr] = getattr(player, attr)
+
+        if stats:
+            try:
+                self.update_player_stats(player.name, stats)
+            except ValueError:
+                # Player profile may not exist yet in some contexts.
+                pass
+
+        # Update the player's bankroll
+        self.update_player_bankroll(player.name, player.bankroll)
+        # Save to file
+        self.save_players()
     
     def delete_player(self, name: str):
         """

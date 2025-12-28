@@ -4,9 +4,9 @@ Implements game analysis, player profiling, and performance metrics.
 """
 from typing import Dict, List, Any, Optional, Tuple
 from collections import defaultdict
-from src.game.card import Card
-from src.game.player import Player
-from src.stats.calculator import HandOddsCalculator, PotOddsCalculator
+from game.card import Card
+from game.player import Player
+from stats.calculator import HandOddsCalculator, PotOddsCalculator
 
 
 class GameAnalyzer:

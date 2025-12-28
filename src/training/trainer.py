@@ -6,7 +6,7 @@ import random
 import math
 from enum import Enum
 from typing import Dict, List, Any, Optional, Tuple
-from src.stats.calculator import PotOddsCalculator
+from stats.calculator import PotOddsCalculator
 
 
 class QuizType(Enum):
@@ -266,15 +266,24 @@ class PokerTrainer:
                     'correct_answer': correct_answer
                 }
                 
-        # Check if answer is within tolerance
+        # Check if answer is within tolerance.
+        # - For fractional answers (0-1), also accept % input (e.g. 25 for 0.25).
+        # - For numeric answers (>1), interpret tolerance <= 1.0 as relative (e.g. 0.2 = ±20%).
         difference = abs(correct_answer - user_answer)
-        is_correct = difference <= tolerance
-        
-        # For percentage answers, be more lenient
-        if correct_answer > 0.01:  # Likely a percentage in decimal form
+
+        is_fractional = 0 < correct_answer <= 1.0
+        if is_fractional:
+            is_correct = difference <= tolerance
+
+            # Also accept percent answers when the user enters 0-100.
             percentage_tolerance = tolerance * 100
             percentage_difference = abs((correct_answer * 100) - user_answer)
-            is_correct = is_correct or percentage_difference <= percentage_tolerance
+            is_correct = is_correct or (percentage_difference <= percentage_tolerance)
+        else:
+            allowed_diff = tolerance
+            if tolerance <= 1.0:
+                allowed_diff = abs(correct_answer) * tolerance
+            is_correct = difference <= allowed_diff
             
         # Update performance stats
         self.performance_stats['total_quizzes'] += 1
