@@ -3,9 +3,9 @@ Test suite for Table class.
 Tests table management, player seating, and game state tracking.
 """
 import pytest
-from src.game.table import Table, TableType, SeatPosition
-from src.game.player import Player
-from src.game.ai_player import AIPlayer, AIStyle
+from game.table import Table, TableType, SeatPosition
+from game.player import Player
+from game.ai_player import AIPlayer, AIStyle
 
 
 class TestSeatPosition:

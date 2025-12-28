@@ -4,12 +4,12 @@ Tests main game logic, flow control, and rule enforcement.
 """
 import pytest
 from unittest.mock import Mock, patch
-from src.game.game_engine import GameEngine, GameState, BettingRound
-from src.game.player import Player, PlayerAction
-from src.game.ai_player import AIPlayer, AIStyle
-from src.game.table import Table, TableType
-from src.game.card import Card, Suit, Rank
-from src.game.pot import Pot
+from game.game_engine import GameEngine, GameState, BettingRound
+from game.player import Player, PlayerAction
+from game.ai_player import AIPlayer, AIStyle
+from game.table import Table, TableType
+from game.card import Card, Suit, Rank
+from game.pot import Pot
 
 
 class TestGameState:
@@ -53,6 +53,9 @@ class TestGameEngine:
             self.mock_display,
             self.mock_input_handler
         )
+        
+        # Set test mode to prevent game loop from running
+        self.game_engine._test_mode = True
         
     def test_game_engine_creation(self):
         """Test creating a game engine."""
@@ -101,6 +104,75 @@ class TestGameEngine:
         
         assert self.game_engine.table is not None
         assert self.game_engine.tournament_mode is True
+        assert self.human_player.bankroll == 5000
+        assert self.game_engine._tournament_buy_in == 1000
+        assert self.game_engine._tournament_starting_chips == 5000
+        assert self.game_engine._tournament_total_players == 7
+        assert self.game_engine._tournament_prize_pool == 7000
+        assert self.game_engine._tournament_cash_bankroll_after_buy_in == 9000
+
+    def test_tournament_requires_affordable_buy_in(self):
+        """Test tournament start fails when bankroll is too small for buy-in."""
+        self.human_player.bankroll = 500
+        game_config = {
+            'type': 'tournament',
+            'limit': 'no_limit',
+            'buy_in': 1000,
+            'starting_chips': 5000
+        }
+
+        self.mock_input_handler.get_number_input.side_effect = [1]
+        self.game_engine.start_game(game_config)
+
+        assert self.game_engine.tournament_mode is False
+        assert self.game_engine.table is None
+        assert self.human_player.bankroll == 500
+
+    def test_tournament_finalizes_win_and_saves_once(self):
+        """Test tournament finalization restores bankroll and saves on win."""
+        game_config = {
+            'type': 'tournament',
+            'limit': 'no_limit',
+            'buy_in': 1000,
+            'starting_chips': 5000
+        }
+
+        self.mock_input_handler.get_number_input.side_effect = [1]
+        self.game_engine.start_game(game_config)
+
+        def fake_play_hand():
+            for player in self.game_engine.table.get_players_in_order():
+                if player != self.human_player:
+                    player.bankroll = 0
+
+        with patch.object(self.game_engine, 'play_hand', side_effect=fake_play_hand) as mock_play_hand:
+            self.game_engine.run_game_loop()
+
+        assert mock_play_hand.call_count == 1
+        assert self.human_player.bankroll == 11000  # 10000 - 1000 + (1000 * 2)
+        self.mock_data_manager.save_player.assert_called_once_with(self.human_player)
+        assert self.game_engine.tournament_mode is False
+
+    def test_tournament_finalizes_loss_and_saves_once(self):
+        """Test tournament finalization restores bankroll and saves on loss."""
+        game_config = {
+            'type': 'tournament',
+            'limit': 'no_limit',
+            'buy_in': 1000,
+            'starting_chips': 5000
+        }
+
+        self.mock_input_handler.get_number_input.side_effect = [1]
+        self.game_engine.start_game(game_config)
+
+        self.human_player.bankroll = 0
+        with patch.object(self.game_engine, 'play_hand') as mock_play_hand:
+            self.game_engine.run_game_loop()
+
+        mock_play_hand.assert_not_called()
+        assert self.human_player.bankroll == 9000  # 10000 - 1000
+        self.mock_data_manager.save_player.assert_called_once_with(self.human_player)
+        assert self.game_engine.tournament_mode is False
         
     def test_deal_hole_cards(self):
         """Test dealing hole cards to players."""
@@ -134,26 +206,144 @@ class TestGameEngine:
     def test_betting_round_preflop(self):
         """Test preflop betting round."""
         # Set up game
-        self.game_engine._setup_cash_game_table(3, 10, 20)
+        self.game_engine._setup_cash_game_table(2, 10, 20)
         self.game_engine._deal_hole_cards()
         self.game_engine._post_blinds()
-        
+
         # Mock player decisions
-        def mock_get_player_action(player, game_state):
+        def mock_get_player_action(player, game_state, highest_bet):
             if player == self.human_player:
                 return PlayerAction.CALL, 20
-            else:
+            elif player == self.game_engine.table.get_small_blind_player():
                 return PlayerAction.FOLD, 0
-                
+            else: # Big blind
+                return PlayerAction.CHECK, 0
+
         with patch.object(self.game_engine, '_get_player_action', side_effect=mock_get_player_action):
             self.game_engine._run_betting_round(BettingRound.PREFLOP)
-            
+
         # Human should have called, others folded
         assert self.human_player.current_bet == 20
-        
+
         # Check folded status
+        for p in self.game_engine.table.get_players_in_order():
+            print(f'Player: {p.name}, Folded: {p.folded}')
         active_players = self.game_engine.table.get_active_players()
         assert len(active_players) == 2  # Human + big blind
+
+    def test_all_in_call_does_not_reset_betting_round(self):
+        """Test that all-in for less than a call doesn't force extra action."""
+        self.game_engine._setup_cash_game_table(2, 10, 20)
+        self.game_engine._post_blinds()
+
+        sb_player = self.game_engine.table.get_small_blind_player()
+        sb_player.bankroll = 50  # short-stack all-in (below a full call)
+
+        action_log = []
+
+        def mock_get_player_action(player, game_state, highest_bet):
+            action_log.append(player)
+            if player == self.human_player:
+                return PlayerAction.RAISE, 100
+            if player == sb_player:
+                return PlayerAction.ALL_IN, 0
+            return PlayerAction.CALL, 100
+
+        with patch.object(self.game_engine, '_get_player_action', side_effect=mock_get_player_action):
+            self.game_engine._run_betting_round(BettingRound.PREFLOP)
+
+        assert action_log.count(self.human_player) == 1
+
+    def test_min_raise_enforced_after_raise(self):
+        """Test that subsequent raises must meet the last-raise size (no-limit)."""
+        self.game_engine._setup_cash_game_table(2, 10, 20)
+        self.game_engine._post_blinds()
+
+        players = self.game_engine.table.get_players_in_order()
+        human = self.human_player
+        ai_1 = next(p for p in players if p != human)
+        ai_2 = next(p for p in players if p not in {human, ai_1})
+
+        def mock_get_player_action(player, game_state, highest_bet):
+            if player == human and highest_bet == 20:
+                return PlayerAction.RAISE, 100  # full raise (size 80)
+            if player == ai_1 and highest_bet == 100:
+                return PlayerAction.RAISE, 150  # undersized vs min raise to 180
+            return PlayerAction.CALL, int(highest_bet)
+
+        with patch.object(self.game_engine, "_get_player_action", side_effect=mock_get_player_action):
+            self.game_engine._run_betting_round(BettingRound.PREFLOP)
+
+        # AI_1's undersized raise should be treated as a call to 100.
+        assert ai_1.current_bet == 100
+        assert max(p.current_bet for p in players) == 100
+
+    def test_non_full_all_in_does_not_reopen_betting(self):
+        """Test that a non-full all-in raise closes action for prior actors."""
+        self.game_engine._setup_cash_game_table(2, 10, 20)
+        self.game_engine._post_blinds()
+
+        players = self.game_engine.table.get_players_in_order()
+        human = self.human_player
+        ai_1 = next(p for p in players if p != human)
+        ai_2 = next(p for p in players if p not in {human, ai_1})
+
+        # Make ai_2 short enough to all-in raise to 150 total (raise size 50 < 80).
+        ai_2.bankroll = 130
+
+        action_log = []
+
+        def mock_get_player_action(player, game_state, highest_bet):
+            action_log.append((player, int(highest_bet)))
+            if player == human and highest_bet == 20:
+                return PlayerAction.RAISE, 100  # full raise (size 80)
+            if player == ai_2 and highest_bet == 100:
+                return PlayerAction.ALL_IN, 0  # non-full raise to 150
+            if player == human and highest_bet == 150:
+                # Attempt to re-raise after the non-full all-in (should be forced to call)
+                return PlayerAction.RAISE, 300
+            return PlayerAction.CALL, int(highest_bet)
+
+        with patch.object(self.game_engine, "_get_player_action", side_effect=mock_get_player_action):
+            self.game_engine._run_betting_round(BettingRound.PREFLOP)
+
+        assert action_log.count((human, 20)) == 1
+        assert any(entry[0] == human and entry[1] == 150 for entry in action_log)
+        assert human.current_bet == 150
+
+    def test_fixed_limit_enforces_bet_sizing_and_raise_cap(self):
+        """Test fixed-limit betting uses fixed increments and caps raises."""
+        self.game_engine.limit_type = "limit"
+        self.game_engine._setup_cash_game_table(2, 10, 20)
+        self.game_engine._post_blinds()
+
+        players = self.game_engine.table.get_players_in_order()
+        human = self.human_player
+        ai_1 = next(p for p in players if p != human)
+        ai_2 = next(p for p in players if p not in {human, ai_1})
+
+        # Script: raise/raise/raise (3 raises after the big blind), then another
+        # raise attempt which should be capped and treated as a call.
+        def mock_get_player_action(player, game_state, highest_bet):
+            hb = int(highest_bet)
+            if player == human and hb == 20:
+                return PlayerAction.RAISE, 999
+            if player == ai_1 and hb == 40:
+                return PlayerAction.RAISE, 999
+            if player == ai_2 and hb == 60:
+                return PlayerAction.RAISE, 999
+            if player == human and hb == 80:
+                return PlayerAction.RAISE, 999  # should be capped -> call
+            return PlayerAction.CALL, hb
+
+        with patch.object(self.game_engine, "_get_player_action", side_effect=mock_get_player_action):
+            self.game_engine._run_betting_round(BettingRound.PREFLOP)
+
+        # Fixed-limit raises should be in 20-chip increments (BB size).
+        assert ai_2.current_bet == 80
+        assert max(p.current_bet for p in players) == 80
+        # The capped raise attempt should not increase the bet to 100.
+        assert human.current_bet == 80
         
     def test_deal_flop(self):
         """Test dealing the flop."""
@@ -205,21 +395,23 @@ class TestGameEngine:
         """Test determining winner at showdown."""
         # Set up game
         self.game_engine._setup_cash_game_table(2, 10, 20)  # Heads up
+        
+        # Community cards: K♠ 9♠ 2♥ 7♣ 4♦
         self.game_engine.community_cards = [
-            Card(Suit.HEARTS, Rank.ACE),
-            Card(Suit.DIAMONDS, Rank.KING),
-            Card(Suit.CLUBS, Rank.QUEEN),
-            Card(Suit.SPADES, Rank.JACK),
-            Card(Suit.HEARTS, Rank.TEN)
+            Card(Suit.SPADES, Rank.KING),
+            Card(Suit.SPADES, Rank.NINE),
+            Card(Suit.HEARTS, Rank.TWO),
+            Card(Suit.CLUBS, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.FOUR)
         ]
         
-        # Give human a royal flush
+        # Give human pocket aces (strong hand: pair of aces)
         self.human_player.deal_hole_cards([
-            Card(Suit.HEARTS, Rank.KING),
-            Card(Suit.HEARTS, Rank.QUEEN)
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.DIAMONDS, Rank.ACE)
         ])
         
-        # Give opponent a weaker hand
+        # Give opponent weaker pair (kings with worse kicker)
         opponent = None
         for player in self.game_engine.table.get_players_in_order():
             if player != self.human_player:
@@ -227,12 +419,13 @@ class TestGameEngine:
                 break
                 
         opponent.deal_hole_cards([
-            Card(Suit.CLUBS, Rank.TWO),
-            Card(Suit.SPADES, Rank.THREE)
+            Card(Suit.CLUBS, Rank.KING),
+            Card(Suit.DIAMONDS, Rank.THREE)
         ])
         
         winners = self.game_engine._determine_winners()
         
+        # Human should win with aces over kings
         assert len(winners) == 1
         assert winners[0] == self.human_player
         
@@ -279,7 +472,7 @@ class TestGameEngine:
         self.game_engine._setup_cash_game_table(3, 10, 20)
         
         # Mock input for fold
-        self.mock_input_handler.get_menu_choice.return_value = 1  # Fold option
+        self.mock_input_handler.get_menu_choice.return_value = 3  # Fold option
         
         action, amount = self.game_engine._get_human_player_action({
             'current_bet': 20,
@@ -296,13 +489,13 @@ class TestGameEngine:
         self.game_engine._setup_cash_game_table(3, 10, 20)
         
         # Mock input for call
-        self.mock_input_handler.get_menu_choice.return_value = 2  # Call option
-        
-        action, amount = self.game_engine._get_human_player_action({
-            'current_bet': 20,
-            'min_raise': 20,
-            'can_check': False
-        })
+        self.mock_input_handler.get_menu_choice.return_value = 1  # Call option
+        with patch.object(self.human_player, 'current_bet', 0):
+            action, amount = self.game_engine._get_human_player_action({
+                'current_bet': 20,
+                'min_raise': 20,
+                'can_check': False
+            })
         
         assert action == PlayerAction.CALL
         assert amount == 20
@@ -313,7 +506,7 @@ class TestGameEngine:
         self.game_engine._setup_cash_game_table(3, 10, 20)
         
         # Mock input for raise
-        self.mock_input_handler.get_menu_choice.return_value = 3  # Raise option
+        self.mock_input_handler.get_menu_choice.return_value = 2  # Raise option
         self.mock_input_handler.get_number_input.return_value = 60  # Raise to 60
         
         action, amount = self.game_engine._get_human_player_action({
@@ -349,13 +542,9 @@ class TestGameEngine:
         self.game_engine.human_player = short_stack_player
         self.game_engine._setup_cash_game_table(3, 10, 20)
         
-        # Replace one AI with our short stack player
-        players = list(self.game_engine.table.get_players_in_order())
-        self.game_engine.table.remove_player(players[-1])
-        self.game_engine.table.add_player(short_stack_player)
-        
-        # All-in with entire stack
-        action, amount = short_stack_player.go_all_in()
+        # Short stack player is already added as human_player during setup
+        # Just test the all-in functionality
+        amount = short_stack_player.go_all_in()
         
         assert short_stack_player.all_in
         assert short_stack_player.bankroll == 0
@@ -395,19 +584,23 @@ class TestGameEngine:
         players = self.game_engine.table.get_players_in_order()
         for player in players:
             player.place_bet(20)
-            
-        assert self.game_engine._is_betting_round_complete()
+        
+        players_acted = {p: True for p in players}
+        assert self.game_engine._is_betting_round_complete(players, players_acted, 20)
         
         # One player raises
         players[0].add_to_bet(30)  # Raise to 50 total
         
-        assert not self.game_engine._is_betting_round_complete()
+        players_acted = {p: True for p in players}
+        players_acted[players[0]] = False
+        assert not self.game_engine._is_betting_round_complete(players, players_acted, 50)
         
         # Others call the raise
         for player in players[1:]:
             player.add_to_bet(30)
             
-        assert self.game_engine._is_betting_round_complete()
+        players_acted = {p: True for p in players}
+        assert self.game_engine._is_betting_round_complete(players, players_acted, 50)
         
     def test_side_pot_creation(self):
         """Test side pot creation with all-in players."""
@@ -454,8 +647,11 @@ class TestGameEngine:
     def test_tournament_elimination(self):
         """Test player elimination in tournament."""
         # Set up tournament
-        self.game_engine._setup_tournament_table(3, 1000)
+        self.game_engine._setup_tournament_table(4, 10000)
         self.game_engine.tournament_mode = True
+        
+        # Get total seated players before elimination
+        all_players_before = len(self.game_engine.table.get_players_in_order())
         
         players = self.game_engine.table.get_players_in_order()
         eliminated_player = players[0]
@@ -463,11 +659,15 @@ class TestGameEngine:
         # Eliminate player (bankroll = 0)
         eliminated_player.bankroll = 0
         
-        active_players_before = len(self.game_engine.table.get_active_players())
+        # Call handle_eliminations to remove the player from table
         self.game_engine._handle_eliminations()
-        active_players_after = len(self.game_engine.table.get_active_players())
         
-        assert active_players_after == active_players_before - 1
+        # Check that player was removed from table
+        all_players_after = len(self.game_engine.table.get_players_in_order())
+        
+        # One less player should be seated at the table
+        assert all_players_after == all_players_before - 1
+        assert eliminated_player not in self.game_engine.table.get_players_in_order()
         
     def test_game_statistics_tracking(self):
         """Test game statistics tracking."""

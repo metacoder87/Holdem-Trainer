@@ -3,7 +3,7 @@ Test suite for Card class.
 Tests the fundamental card representation and comparison logic.
 """
 import pytest
-from src.game.card import Card, Suit, Rank
+from game.card import Card, Suit, Rank
 
 
 class TestCard:

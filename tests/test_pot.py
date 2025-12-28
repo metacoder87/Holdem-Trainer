@@ -3,8 +3,8 @@ Test suite for Pot management.
 Tests pot creation, side pot handling, and distribution logic.
 """
 import pytest
-from src.game.pot import Pot, SidePot
-from src.game.player import Player
+from game.pot import Pot, SidePot
+from game.player import Player
 
 
 class TestPot:

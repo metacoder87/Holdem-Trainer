@@ -3,11 +3,11 @@ Test suite for Statistics and Analytics.
 Tests poker statistics calculations, odds computation, and performance analysis.
 """
 import pytest
-from src.stats.calculator import PotOddsCalculator, HandOddsCalculator, EquityCalculator
-from src.stats.analyzer import GameAnalyzer, PlayerAnalyzer
-from src.game.card import Card, Suit, Rank
-from src.game.hand import Hand
-from src.game.player import Player
+from stats.calculator import PotOddsCalculator, HandOddsCalculator, EquityCalculator
+from stats.analyzer import GameAnalyzer, PlayerAnalyzer
+from game.card import Card, Suit, Rank
+from game.hand import Hand
+from game.player import Player
 
 
 class TestPotOddsCalculator:

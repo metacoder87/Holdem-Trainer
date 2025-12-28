@@ -3,8 +3,8 @@ Test suite for Player class.
 Tests player creation, actions, and state management.
 """
 import pytest
-from src.game.player import Player, PlayerAction
-from src.game.card import Card, Suit, Rank
+from game.player import Player, PlayerAction
+from game.card import Card, Suit, Rank
 
 
 class TestPlayerAction:
@@ -130,7 +130,8 @@ class TestPlayer:
         """Test raising a bet."""
         player = Player("TestPlayer", 1000)
         
-        raise_amount = player.raise_bet(50, 150)  # Raise from 50 to 150
+        player.place_bet(50)
+        raise_amount = player.raise_bet(150)  # Raise to 150
         
         assert raise_amount == 100  # The raise amount
         assert player.current_bet == 150
@@ -193,8 +194,9 @@ class TestPlayer:
         """Test checking if player can raise."""
         player = Player("TestPlayer", 200)
         
-        assert player.can_raise(50, 150)  # Raise to 150, has enough
-        assert not player.can_raise(50, 250)  # Raise to 250, not enough
+        player.place_bet(50)
+        assert player.can_raise(150)  # Raise to 150, has enough
+        assert not player.can_raise(250)  # Raise to 250, not enough
         
     def test_reset_for_new_hand(self):
         """Test resetting player for new hand."""

@@ -11,8 +11,7 @@ from pathlib import Path
 
 
 def run_all_tests(verbose=False, coverage=False):
-    """Run all tests."""
-    cmd = ["python", "-m", "pytest"]
+    cmd = ["python3", "-m", "pytest"]
     
     if verbose:
         cmd.append("-v")
@@ -27,7 +26,7 @@ def run_all_tests(verbose=False, coverage=False):
 
 def run_unit_tests(verbose=False):
     """Run only unit tests."""
-    cmd = ["python", "-m", "pytest", "-m", "unit"]
+    cmd = ["python3", "-m", "pytest", "-m", "unit"]
     
     if verbose:
         cmd.append("-v")
@@ -39,7 +38,7 @@ def run_unit_tests(verbose=False):
 
 def run_integration_tests(verbose=False):
     """Run only integration tests."""
-    cmd = ["python", "-m", "pytest", "-m", "integration"]
+    cmd = ["python3", "-m", "pytest", "-m", "integration"]
     
     if verbose:
         cmd.append("-v")
@@ -51,7 +50,7 @@ def run_integration_tests(verbose=False):
 
 def run_specific_test_file(test_file, verbose=False):
     """Run tests from a specific file."""
-    cmd = ["python", "-m", "pytest"]
+    cmd = ["python3", "-m", "pytest"]
     
     if verbose:
         cmd.append("-v")
@@ -63,7 +62,7 @@ def run_specific_test_file(test_file, verbose=False):
 
 def run_tests_by_category(category, verbose=False):
     """Run tests by category (marker)."""
-    cmd = ["python", "-m", "pytest", "-m", category]
+    cmd = ["python3", "-m", "pytest", "-m", category]
     
     if verbose:
         cmd.append("-v")

@@ -3,8 +3,8 @@ Test suite for Hand evaluation and ranking.
 Tests poker hand detection, comparison, and ranking logic.
 """
 import pytest
-from src.game.hand import Hand, HandRank
-from src.game.card import Card, Suit, Rank
+from game.hand import Hand, HandRank
+from game.card import Card, Suit, Rank
 
 
 class TestHandRank:
