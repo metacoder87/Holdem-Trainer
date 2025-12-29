@@ -297,8 +297,6 @@ class HandOddsCalculator:
             
             return min(base_strength, 1.0)
             
-            return strength_map.get(hand.rank, 0.5)
-            
         except Exception:
             return 0.0
     
