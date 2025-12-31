@@ -56,3 +56,8 @@ data/backup/
 # Logs
 *.log
 logs/
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.env

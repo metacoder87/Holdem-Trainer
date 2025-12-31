@@ -1,0 +1,21 @@
+# PyHoldem Pro Frontend
+
+Stylish neon React frontend for the training platform.
+
+## Stack
+- Vite + React + TypeScript
+- PixiJS for 2D table graphics (@pixi/react)
+- Framer Motion for key UI animations
+- Howler for sound design
+- ECharts for analytics dashboards
+
+## Run (dev)
+
+```bash
+npm install
+npm run dev
+```
+
+## Env
+
+Create `.env` from `.env.example` and set `VITE_API_URL` to your FastAPI host.
