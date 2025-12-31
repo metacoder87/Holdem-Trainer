@@ -82,6 +82,43 @@ python scripts/training_demo.py
 python scripts/demo.py
 ```
 
+## Web API (FastAPI)
+
+The API wraps the core engine for UI consumption (summary, training content, bankroll, demo hands).
+See `docs/api-contract.md` for the full contract.
+
+Run the API:
+
+```bash
+pip install -r backend/requirements.txt
+PYTHONPATH=backend uvicorn app.main:app --reload
+```
+
+Useful endpoints:
+- `GET /health`
+- `GET /api/summary`
+- `GET /api/training/content`
+- `GET /api/training/quiz`
+- `GET /api/bankroll/players`
+- `POST /api/bankroll/players`
+- `PATCH /api/bankroll/players/{player_name}`
+- `GET /api/games/modes`
+- `POST /api/games/sessions`
+- `POST /api/games/sessions/{session_id}/demo-hand`
+
+## Frontend (React)
+
+The web UI lives in `frontend/` and consumes the FastAPI endpoints.
+See `frontend/README.md` for details.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+If the API is not on `http://localhost:8000`, set `VITE_API_URL` in `frontend/.env`.
+
 ## How to use
 
 1. Create or select a player profile
@@ -138,27 +175,9 @@ make test
 - `scripts/`: demos and manual test scripts
 - `tests/`: unit + integration tests
 
-## Roadmap (planned / high-value)
+## Roadmap
 
-1. Deeper decision grading:
-   - Bet sizing feedback (street-aware sizing, SPR-based guidance)
-   - Preflop ranges by position (open/call/3-bet/fold)
-   - Multi-street planning feedback (barrel frequencies, value vs bluff)
-2. Equity training upgrades:
-   - Range-vs-range equity (Monte Carlo where needed)
-   - Multiway equity and “clean outs” explanations
-   - Board texture and blocker-aware tips
-3. Hand history tooling:
-   - Search/filter by spot, opponent type, or mistakes
-   - Export to common hand-history formats (for external analysis)
-4. AI improvements:
-   - Strategy/range-based decision logic
-   - Opponent adaptation and exploit training
-5. Tournament depth:
-   - More payout structures, configurable levels, and multi-table support
-6. UX polish:
-   - Better replay UI, summaries, and training prompts
-   - Config file support for defaults (blinds, training toggles, etc.)
+See `docs/ROADMAP.md` for actionable phases, deliverables, and acceptance criteria.
 
 ## Disclaimer
 
