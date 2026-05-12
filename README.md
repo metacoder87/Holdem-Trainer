@@ -8,7 +8,7 @@ PyHoldem Pro is a terminal-based Texas Hold’em poker game and training platfor
 - Training experience integrated (HUD, quizzes, post-hand feedback, adaptive session menu)
 - Hand history persistence + replay implemented (per-player JSONL histories)
 - Decision-point capture + grading implemented (stored per hand and summarized per session)
-- Test suite: 358 passing tests
+- Test suite: 364 passing tests
 
 ## Features
 
@@ -48,6 +48,22 @@ PyHoldem Pro is a terminal-based Texas Hold’em poker game and training platfor
 - Per-player hand histories stored as JSONL in `data/hand_histories/`
 - Recent hands are also cached into player profiles for quick access
 
+### PostgreSQL (optional)
+
+Set `PYHOLDEM_DB_URL` to use PostgreSQL for persistence instead of JSON files.
+
+Example:
+
+```bash
+export PYHOLDEM_DB_URL="postgresql://user:password@localhost:5432/pyholdem"
+```
+
+To migrate existing JSON data:
+
+```bash
+python scripts/migrate_json_to_db.py --db-url "$PYHOLDEM_DB_URL"
+```
+
 ## Requirements
 
 - Python 3.8+
@@ -68,7 +84,7 @@ For development and testing:
 pip install -r requirements-dev.txt
 ```
 
-## Run
+## Run CLI Application
 
 ```bash
 python main.py
@@ -95,6 +111,7 @@ PYTHONPATH=backend uvicorn app.main:app --reload
 ```
 
 Useful endpoints:
+
 - `GET /health`
 - `GET /api/summary`
 - `GET /api/training/content`
@@ -104,6 +121,10 @@ Useful endpoints:
 - `PATCH /api/bankroll/players/{player_name}`
 - `GET /api/games/modes`
 - `POST /api/games/sessions`
+- `GET /api/games/sessions/{session_id}`
+- `POST /api/games/sessions/{session_id}/hand/start`
+- `POST /api/games/sessions/{session_id}/hand/input`
+- `WS /ws/{session_id}`
 - `POST /api/games/sessions/{session_id}/demo-hand`
 
 ## Frontend (React)
@@ -118,6 +139,7 @@ npm run dev
 ```
 
 If the API is not on `http://localhost:8000`, set `VITE_API_URL` in `frontend/.env`.
+The API allows `http://localhost:5173` and `http://127.0.0.1:5173` by default; override with `PYHOLDEM_CORS_ORIGINS` for other frontend hosts.
 
 ## How to use
 
@@ -158,6 +180,7 @@ Run the full test suite:
 pip install -r requirements-dev.txt
 python -m pytest -q
 ```
+On Windows systems where `python` is the Microsoft Store alias, use `py -3 -m pytest -q`.
 
 Or use the Makefile:
 

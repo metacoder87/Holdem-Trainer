@@ -16,6 +16,14 @@ npm install
 npm run dev
 ```
 
+## Checks
+
+```bash
+npm run typecheck
+npm test
+npm run build
+```
+
 ## Env
 
 Create `.env` from `.env.example` and set `VITE_API_URL` to your FastAPI host.

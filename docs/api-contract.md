@@ -1,4 +1,4 @@
-# PyHoldem Pro API Contract (Draft)
+# PyHoldem Pro API Contract
 
 Base URL: `http://localhost:8000`
 
@@ -6,63 +6,59 @@ Base URL: `http://localhost:8000`
 - `GET /health`
   - Response: `{ "status": "ok" }`
 
-## Summary (used by dashboard)
+## Dashboard Summary
 - `GET /api/summary?player={name}`
-  - Response:
-    ```json
-    {
-      "player": { "name": "Jon", "skill_level": "beginner", "last_played": "2025-12-26T11:20:44.019846" },
-      "live_metrics": [{ "label": "VPIP", "value": "23%", "delta": "+2%", "tone": "good" }],
-      "training_tracks": [{ "title": "Preflop Mastery", "summary": "...", "cadence": "Daily drills", "intensity": "Core", "progress": 62 }],
-      "focus_queue": ["Position-based range review"],
-      "timeline": [{ "time": "10:12", "label": "Hand 42", "detail": "Missed thin value spot" }]
-    }
-    ```
+  - Returns the active player, live metrics, training tracks, focus queue, and recent timeline.
+- `GET /api/charts/{metric}?player={name}`
+  - Returns recorded session trend points for metrics such as `vpip`, `pfr`, `decision_accuracy`, and `aggression_factor`.
+- `GET /api/summary/report?player={name}`
+  - Returns aggregate playing style, recommendations, performance metrics, and strategy score.
 
-## Players
+## Players And Bankroll
 - `GET /api/players`
-  - Response: list of `{ name, bankroll, last_played, skill_level }`
 - `GET /api/players/{player_name}`
-  - Response: `{ name, bankroll, last_played, skill_level, sessions, last_session }`
+- `GET /api/bankroll/players`
+- `POST /api/bankroll/players`
+  - Body: `{ "name": "Hero", "bankroll": 10000 }`
+- `PATCH /api/bankroll/players/{player_name}`
+  - Body: `{ "bankroll": 12000 }`
+- `GET /api/bankroll/summary`
 
-## Sessions (planned)
-- `POST /api/sessions`
-  - Body: `{ player_name, game_type, limit_type, settings }`
-  - Response: `{ session_id, status }`
-- `GET /api/sessions/{session_id}`
-  - Response: `{ session_id, status, current_hand, players, table_state }`
-- `POST /api/sessions/{session_id}/actions`
-  - Body: `{ action, amount }`
-  - Response: `{ accepted, resulting_state }`
-- `POST /api/sessions/{session_id}/end`
-  - Response: `{ status, summary }`
+## Game Sessions
+- `GET /api/games/modes`
+  - Returns supported game modes and default config.
+- `POST /api/games/sessions`
+  - Body: `{ "player_name": "Hero", "game_type": "cash", "limit_type": "no_limit", "opponents": 3 }`
+  - Response: `{ "id", "player_name", "game_type", "limit_type", "status", "config" }`
+- `GET /api/games/sessions/{session_id}`
+- `POST /api/games/sessions/{session_id}/hand/start`
+- `GET /api/games/sessions/{session_id}/hand`
+- `POST /api/games/sessions/{session_id}/hand/input`
+  - Body for menu inputs: `{ "choice": 1 }`
+  - Body for number/yes-no inputs: `{ "value": 120 }`
+- `POST /api/games/sessions/{session_id}/demo-hand`
 
-## Training (planned)
-- `GET /api/training/tracks?player={name}`
-  - Response: list of tracks with progress + next drill.
-- `POST /api/training/drills`
-  - Body: `{ player_name, focus_areas, difficulty }`
-  - Response: `{ drill_id, scenario }`
-- `POST /api/training/quizzes/{quiz_id}/answer`
-  - Body: `{ answer }`
-  - Response: `{ correct, explanation, next_quiz_id }`
+## Training
+- `GET /api/training/content`
+- `GET /api/training/quiz?quiz_type=pot_odds`
+- `POST /api/training/quiz/evaluate`
+  - Body: `{ "correct_answer": 22.5, "user_answer": 23, "tolerance": 0.05 }`
+- `GET /api/training/drill?player={name}&focus={weakness}`
+  - Returns a targeted scenario, quiz, and curriculum metadata.
 
-## Analytics (planned)
-- `GET /api/analytics/summary?player={name}`
-  - Response: `{ vpip, pfr, aggression_factor, decision_accuracy, trends }`
-- `GET /api/analytics/leaks?player={name}`
-  - Response: list of detected leaks with severity and recommended drills.
+## Hand Histories And Replay
+- `GET /api/hands?player={name}&limit=50&reverse=true`
+- `GET /api/hands/{player_name}/{hand_number}`
+- `GET /api/hands/filter?player={name}&winner=hero&min_pot=100`
 
-## Hand histories (planned)
-- `GET /api/hands?player={name}&limit=50`
-  - Response: list of hand summaries.
-- `GET /api/hands/{hand_id}`
-  - Response: full hand history + decision points.
-- `GET /api/hands/{hand_id}/replay`
-  - Response: ordered events for replay UI.
+## Analytics
+- `GET /api/stats/sessions?player={name}&limit=20`
+  - Returns recorded session rows from the active persistence layer.
 
-## WebSocket (planned)
-- `WS /ws/sessions/{session_id}`
-  - Events: `state_update`, `action_result`, `hand_complete`.
-- `WS /ws/training/{player_name}`
-  - Events: `drill_update`, `quiz_result`, `performance_snapshot`.
+## WebSocket
+- `WS /ws/{session_id}`
+  - Sends the same hand-state shape returned by `GET /api/games/sessions/{session_id}/hand` whenever state changes.
+
+## Persistence
+- JSON files are the local fallback for players, sessions, and hand histories.
+- Set `PYHOLDEM_DB_URL` to use PostgreSQL for persistent players, sessions, and hands.
