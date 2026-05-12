@@ -10,35 +10,33 @@ import threading
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from jsonschema import validate, ValidationError
+from data.schema import PLAYER_SCHEMA as PLAYER_SCHEMA_DEF
+
+
+def _resolve_db_url(explicit: Optional[str] = None) -> Optional[str]:
+    if explicit:
+        return explicit
+    db_url = os.getenv("PYHOLDEM_DB_URL")
+    if db_url:
+        return db_url
+    use_db = os.getenv("PYHOLDEM_USE_DB", "").strip().lower()
+    if use_db in {"1", "true", "yes", "on"}:
+        return os.getenv("DATABASE_URL")
+    return None
 
 
 class DataManager:
     """Manages player data persistence using JSON files."""
     
     # JSON schema for player data validation
-    PLAYER_SCHEMA = {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string", "minLength": 1},
-            "bankroll": {"type": "number", "minimum": 0},
-            "created_at": {"type": "string"},
-            "last_played": {"type": "string"},
-            "games_played": {"type": "integer", "minimum": 0},
-            "games_won": {"type": "integer", "minimum": 0},
-            "total_winnings": {"type": "number"},
-            "hands_played": {"type": "integer", "minimum": 0},
-            "hands_won": {"type": "integer", "minimum": 0},
-            "biggest_pot": {"type": "number", "minimum": 0}
-        },
-        "required": ["name", "bankroll", "created_at"],
-        "additionalProperties": True
-    }
+    PLAYER_SCHEMA = PLAYER_SCHEMA_DEF
     
     def __init__(
         self,
         data_file: str = "data/players.json",
         *,
         hand_history_dir: Optional[str] = None,
+        db_url: Optional[str] = None,
     ):
         """
         Initialize the data manager.
@@ -52,6 +50,15 @@ class DataManager:
         self.hand_history_dir = hand_history_dir or os.path.join(base_dir, "hand_histories")
         self.players_data: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.RLock()  # Thread-safe operations
+        self._db_url = _resolve_db_url(db_url)
+        self._use_db = bool(self._db_url)
+        self._db = None
+
+        if self._use_db:
+            from data.postgres_store import PostgresStore
+
+            self._db = PostgresStore(self._db_url)
+            return
         
         # Ensure data directory exists
         os.makedirs(base_dir, exist_ok=True)
@@ -83,6 +90,9 @@ class DataManager:
         Returns:
             Path to the JSONL history file written.
         """
+        if self._use_db:
+            return self._db.append_hand_history(player_name, hand_record)
+
         if not isinstance(hand_record, dict):
             raise ValueError("Hand record must be a dictionary")
 
@@ -148,6 +158,9 @@ class DataManager:
         Returns:
             List of hand record dictionaries.
         """
+        if self._use_db:
+            return self._db.load_hand_history(player_name, limit=limit, reverse=reverse)
+
         with self._lock:
             path = self._hand_history_path_for_player(player_name)
             if not os.path.exists(path):
@@ -188,6 +201,9 @@ class DataManager:
         Raises:
             ValueError: If name is invalid, bankroll is invalid, or player exists
         """
+        if self._use_db:
+            return self._db.create_player(name, initial_bankroll)
+
         if not name or not name.strip():
             raise ValueError("Player name cannot be empty")
         
@@ -230,6 +246,9 @@ class DataManager:
         Returns:
             Player data dictionary or None if not found
         """
+        if self._use_db:
+            return self._db.get_player(name)
+
         with self._lock:
             if not name or name.strip() not in self.players_data:
                 return None
@@ -245,6 +264,9 @@ class DataManager:
         Returns:
             True if player exists
         """
+        if self._use_db:
+            return self._db.player_exists(name)
+
         with self._lock:
             return name.strip() in self.players_data if name else False
     
@@ -259,6 +281,9 @@ class DataManager:
         Raises:
             ValueError: If player not found or invalid bankroll
         """
+        if self._use_db:
+            return self._db.update_player_bankroll(name, new_bankroll)
+
         if new_bankroll < 0:
             raise ValueError("Bankroll cannot be negative")
         
@@ -280,6 +305,9 @@ class DataManager:
         Raises:
             ValueError: If player not found
         """
+        if self._use_db:
+            return self._db.update_player_stats(name, stats)
+
         with self._lock:
             if name not in self.players_data:
                 raise ValueError(f"Player '{name}' not found")
@@ -297,6 +325,9 @@ class DataManager:
         Args:
             player: Player object with name and bankroll attributes
         """
+        if self._use_db:
+            return self._db.save_player(player)
+
         # Update player statistics (if available on the object)
         stats: Dict[str, Any] = {}
         for attr in ("hands_played", "hands_won", "total_winnings"):
@@ -325,6 +356,9 @@ class DataManager:
         Raises:
             ValueError: If player not found
         """
+        if self._use_db:
+            return self._db.delete_player(name)
+
         with self._lock:
             if name not in self.players_data:
                 raise ValueError(f"Player '{name}' not found")
@@ -342,6 +376,9 @@ class DataManager:
         Returns:
             List of player data dictionaries
         """
+        if self._use_db:
+            return self._db.list_players(sort_by=sort_by, reverse=reverse)
+
         with self._lock:
             players = list(self.players_data.values())
             
@@ -361,12 +398,17 @@ class DataManager:
         Raises:
             IOError: If file cannot be written
         """
+        if self._use_db:
+            return self._db.save_players()
+
         with self._lock:
             try:
                 # Create backup before saving
                 if os.path.exists(self.data_file):
                     backup_file = f"{self.data_file}.bak"
-                    os.rename(self.data_file, backup_file)
+                    if os.path.exists(backup_file):
+                        os.remove(backup_file)
+                    os.replace(self.data_file, backup_file)
                 
                 # Save to file
                 with open(self.data_file, 'w', encoding='utf-8') as f:
@@ -376,7 +418,7 @@ class DataManager:
                 # Restore backup if save failed
                 backup_file = f"{self.data_file}.bak"
                 if os.path.exists(backup_file):
-                    os.rename(backup_file, self.data_file)
+                    os.replace(backup_file, self.data_file)
                 # Re-raise the original exception
                 raise
     
@@ -387,6 +429,9 @@ class DataManager:
         Raises:
             json.JSONDecodeError: If file contains invalid JSON
         """
+        if self._use_db:
+            return self._db.load_players()
+
         with self._lock:
             if not os.path.exists(self.data_file):
                 # Create empty data structure
@@ -421,6 +466,9 @@ class DataManager:
         Args:
             backup_file: Path to backup file
         """
+        if self._use_db:
+            return self._db.backup_players_data(backup_file)
+
         with self._lock:
             with open(backup_file, 'w', encoding='utf-8') as f:
                 json.dump(self.players_data, f, indent=2, ensure_ascii=False)
@@ -435,6 +483,9 @@ class DataManager:
         Raises:
             IOError: If backup file cannot be read
         """
+        if self._use_db:
+            return self._db.restore_players_data(backup_file)
+
         with self._lock:
             try:
                 with open(backup_file, 'r', encoding='utf-8') as f:
@@ -455,6 +506,9 @@ class DataManager:
         Raises:
             ValidationError: If data is invalid
         """
+        if self._use_db:
+            return self._db.validate_player_data(player_data)
+
         try:
             validate(instance=player_data, schema=self.PLAYER_SCHEMA)
             return True
@@ -471,6 +525,9 @@ class DataManager:
         Returns:
             Dictionary with calculated statistics
         """
+        if self._use_db:
+            return self._db.get_player_statistics(name)
+
         with self._lock:
             player = self.players_data.get(name)
             if not player:
@@ -510,6 +567,9 @@ class DataManager:
         Returns:
             List of top players
         """
+        if self._use_db:
+            return self._db.get_leaderboard(metric=metric, limit=limit)
+
         players = self.list_players(sort_by=metric, reverse=True)
         return players[:limit]
     
@@ -523,6 +583,9 @@ class DataManager:
         Returns:
             Number of players removed
         """
+        if self._use_db:
+            return self._db.cleanup_inactive_players(days_inactive=days_inactive)
+
         from datetime import datetime, timedelta
         
         cutoff_date = datetime.now() - timedelta(days=days_inactive)
@@ -554,6 +617,9 @@ class DataManager:
             export_file: Path to export file
             format: Export format ("json" or "csv")
         """
+        if self._use_db:
+            return self._db.export_data(export_file, format=format)
+
         with self._lock:
             if format.lower() == "json":
                 with open(export_file, 'w', encoding='utf-8') as f:
@@ -567,6 +633,169 @@ class DataManager:
                         writer.writeheader()
                         writer.writerows(players)
     
+    def create_session(self, session_data: Dict[str, Any]) -> None:
+        """
+        Create a new game session record.
+        """
+        if self._use_db and self._db:
+            self._db.create_session(session_data)
+            return
+
+        if not isinstance(session_data, dict):
+            raise ValueError("Session data must be a dictionary")
+
+        player_name = str(session_data.get("player_name") or "").strip()
+        if not player_name:
+            raise ValueError("Session player name is required")
+
+        payload = dict(session_data)
+        now = datetime.now().isoformat()
+        payload.setdefault("created_at", now)
+        payload.setdefault("started_at", payload.get("created_at", now))
+        payload.setdefault("hands_played", 0)
+
+        with self._lock:
+            player = self.players_data.get(player_name)
+            if player is None:
+                player = {
+                    "name": player_name,
+                    "bankroll": int(payload.get("bankroll", 10000) or 10000),
+                    "created_at": now,
+                    "last_played": now,
+                    "games_played": 0,
+                    "games_won": 0,
+                    "total_winnings": 0.0,
+                    "hands_played": 0,
+                    "hands_won": 0,
+                    "biggest_pot": 0.0,
+                }
+                self.players_data[player_name] = player
+
+            sessions = player.setdefault("sessions", [])
+            if not isinstance(sessions, list):
+                sessions = []
+                player["sessions"] = sessions
+
+            session_id = payload.get("id")
+            existing = None
+            for index, session in enumerate(sessions):
+                if isinstance(session, dict) and session.get("id") == session_id:
+                    existing = index
+                    break
+
+            if existing is None:
+                sessions.append(payload)
+            else:
+                merged = dict(sessions[existing])
+                merged.update(payload)
+                sessions[existing] = merged
+                payload = merged
+
+            player["last_session"] = payload
+            player["last_played"] = now
+            player["games_played"] = len(sessions)
+            self.save_players()
+
+    def update_session(self, session_id: str, updates: Dict[str, Any]) -> None:
+        """
+        Update an existing game session record.
+        """
+        if self._use_db and self._db:
+            self._db.update_session(session_id, updates)
+            return
+
+        if not session_id:
+            raise ValueError("Session ID is required")
+        if not isinstance(updates, dict):
+            raise ValueError("Session updates must be a dictionary")
+
+        player_name = str(updates.get("player_name") or "").strip()
+        now = datetime.now().isoformat()
+
+        with self._lock:
+            players = [self.players_data.get(player_name)] if player_name else list(self.players_data.values())
+            for player in players:
+                if not isinstance(player, dict):
+                    continue
+                sessions = player.setdefault("sessions", [])
+                if not isinstance(sessions, list):
+                    sessions = []
+                    player["sessions"] = sessions
+
+                target_index = None
+                for index, session in enumerate(sessions):
+                    if isinstance(session, dict) and session.get("id") == session_id:
+                        target_index = index
+                        break
+
+                if target_index is None and player_name:
+                    payload = {"id": session_id, "player_name": player_name, "created_at": now}
+                    payload.update(updates)
+                    sessions.append(payload)
+                    target_index = len(sessions) - 1
+
+                if target_index is None:
+                    continue
+
+                merged = dict(sessions[target_index])
+                merged.update(updates)
+                merged["id"] = session_id
+                merged.setdefault("player_name", player.get("name"))
+                merged["updated_at"] = now
+                sessions[target_index] = merged
+                player["last_session"] = merged
+                player["last_played"] = now
+                player["games_played"] = len(sessions)
+                player["hands_played"] = sum(int(s.get("hands_played", 0) or 0) for s in sessions if isinstance(s, dict))
+                if "bankroll_end" in merged:
+                    player["bankroll"] = int(merged.get("bankroll_end") or player.get("bankroll", 0))
+                if "biggest_pot" in merged:
+                    player["biggest_pot"] = max(int(player.get("biggest_pot", 0) or 0), int(merged.get("biggest_pot", 0) or 0))
+                self.save_players()
+                return
+
+    def get_sessions(self, player_name: str, limit: int = 50) -> List[Dict[str, Any]]:
+        if self._use_db and self._db:
+            return self._db.get_sessions(player_name, limit)
+        with self._lock:
+            player = self.players_data.get(player_name)
+            if not isinstance(player, dict):
+                return []
+            sessions = player.get("sessions") or []
+            if not isinstance(sessions, list):
+                return []
+            records = [dict(session) for session in sessions if isinstance(session, dict)]
+            records.sort(key=lambda s: s.get("updated_at") or s.get("ended_at") or s.get("started_at") or s.get("created_at") or "")
+            return records[-limit:]
+
+    def get_filtered_hands(self, player_name: str, winner: Optional[str] = None, min_pot: Optional[int] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        if self._use_db and self._db:
+             return self._db.get_filtered_hands(player_name, winner, min_pot, limit)
+        records = self.load_hand_history(player_name, limit=max(limit * 5, limit), reverse=True)
+        filtered: List[Dict[str, Any]] = []
+        for hand in records:
+            if winner:
+                winners = hand.get("winners") or []
+                if winner == "hero":
+                    hero_won = player_name in winners or bool((hand.get("meta") or {}).get("hero_won"))
+                    if not hero_won:
+                        continue
+                elif winner not in winners and hand.get("winner") != winner:
+                    continue
+
+            if min_pot is not None:
+                pot_total = hand.get("pot_total", hand.get("pot_size", 0))
+                try:
+                    if int(pot_total or 0) < int(min_pot):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+
+            filtered.append(hand)
+            if len(filtered) >= limit:
+                break
+        return filtered
+
     def get_data_summary(self) -> Dict[str, Any]:
         """
         Get summary of data manager state.
@@ -574,6 +803,9 @@ class DataManager:
         Returns:
             Summary statistics
         """
+        if self._use_db:
+            return self._db.get_data_summary()
+
         with self._lock:
             total_players = len(self.players_data)
             total_bankroll = sum(p.get("bankroll", 0) for p in self.players_data.values())
