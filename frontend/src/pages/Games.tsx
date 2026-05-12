@@ -6,6 +6,7 @@ import {
   getGameSession,
   getGameHandState,
   startGameHand,
+  type JsonValue,
   type GameHandState,
   type GameMode,
   type GameSession
@@ -51,12 +52,15 @@ export default function Games() {
     setLoadingMode(mode.id);
     setStatus(null);
     try {
-      const newSession = await createGameSession({
+      const payload: Record<string, JsonValue> = {
         game_type: mode.id === "tournament" ? "tournament" : "cash",
         limit_type: limitType,
-        player_name: activePlayer || undefined,
         ...mode.defaults
-      });
+      };
+      if (activePlayer) {
+        payload.player_name = activePlayer;
+      }
+      const newSession = await createGameSession(payload);
       setSession(newSession);
       localStorage.setItem("ph_session_id", newSession.id);
       setHandState(null);
@@ -97,6 +101,12 @@ export default function Games() {
       }
     }
   };
+
+  const terminalReason = handState?.terminal_reason || handState?.state?.game_over_reason || session?.terminal_reason;
+  const isGameOver = handState?.status === "game_over" || Boolean(terminalReason);
+  const winningHandSummary = handState?.last_hand?.winning_hands
+    ?.map((hand) => `${hand.player}: ${hand.rank ?? "Winning hand"}${hand.cards?.length ? ` (${hand.cards.join(" ")})` : ""}`)
+    .join("; ");
 
   return (
     <>
@@ -170,17 +180,22 @@ export default function Games() {
                 </div>
                 <div>
                   <div className="stat-label">Status</div>
-                  <div className="stat-value">{handState?.status || session.status}</div>
+                  <div className="stat-value">
+                    {isGameOver ? "game_over" : handState?.status || session.status}
+                  </div>
                 </div>
               </div>
               <div className="hero-actions">
                 <Link className="btn ghost" to="/session">
                   Open Session
                 </Link>
-                <button className="btn primary" type="button" onClick={handleStartHand}>
-                  Start Next Hand
+                <button className="btn primary" type="button" onClick={handleStartHand} disabled={isGameOver}>
+                  {isGameOver ? "Game Over" : "Start Next Hand"}
                 </button>
               </div>
+              {terminalReason && (
+                <div className="form-status">Session ended: {terminalReason.replace(/_/g, " ")}.</div>
+              )}
             </>
           )}
           {status && <div className="form-status">{status}</div>}
@@ -208,6 +223,14 @@ export default function Games() {
               <div className="demo-row">
                 <span>Winners</span>
                 <span>{handState.last_hand.winners?.join(", ") || "-"}</span>
+              </div>
+              <div className="demo-row">
+                <span>Winning Hand</span>
+                <span>
+                  {handState.last_hand.won_by_fold
+                    ? "Won by fold"
+                    : winningHandSummary || handState.last_hand.winning_hand_rank || "-"}
+                </span>
               </div>
               <div className="demo-row">
                 <span>Pot</span>

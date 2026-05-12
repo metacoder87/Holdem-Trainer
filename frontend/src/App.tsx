@@ -1,19 +1,23 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { getHealth, getSummary, SummaryResponse } from "./api/client";
 import Shell from "./components/Shell";
-import {
-  Home,
-  Training,
-  Table,
-  Analytics,
-  Replay,
-  Session,
-  Drill,
-  NotFound,
-  Bankroll,
-  Games
-} from "./pages";
+
+const Home = lazy(() => import("./pages/Home"));
+const Training = lazy(() => import("./pages/Training"));
+const Table = lazy(() => import("./pages/Table"));
+const Analytics = lazy(() => import("./pages/Analytics"));
+const Replay = lazy(() => import("./pages/Replay"));
+const ReplayDetail = lazy(() => import("./pages/ReplayDetail"));
+const Session = lazy(() => import("./pages/Session"));
+const Drill = lazy(() => import("./pages/Drill"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const Bankroll = lazy(() => import("./pages/Bankroll"));
+const Games = lazy(() => import("./pages/Games"));
+
+function PageBoundary({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<div className="page-loading">Loading...</div>}>{children}</Suspense>;
+}
 
 const fallbackSummary: SummaryResponse = {
   player: {
@@ -101,7 +105,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [activePlayer]);
 
   return (
     <BrowserRouter>
@@ -116,16 +120,17 @@ export default function App() {
             />
           }
         >
-          <Route index element={<Home />} />
-          <Route path="games" element={<Games />} />
-          <Route path="table" element={<Table />} />
-          <Route path="training" element={<Training />} />
-          <Route path="training/drill" element={<Drill />} />
-          <Route path="analytics" element={<Analytics />} />
-          <Route path="replay" element={<Replay />} />
-          <Route path="session" element={<Session />} />
-          <Route path="bankroll" element={<Bankroll />} />
-          <Route path="*" element={<NotFound />} />
+          <Route index element={<PageBoundary><Home /></PageBoundary>} />
+          <Route path="games" element={<PageBoundary><Games /></PageBoundary>} />
+          <Route path="table" element={<PageBoundary><Table /></PageBoundary>} />
+          <Route path="training" element={<PageBoundary><Training /></PageBoundary>} />
+          <Route path="training/drill" element={<PageBoundary><Drill /></PageBoundary>} />
+          <Route path="analytics" element={<PageBoundary><Analytics /></PageBoundary>} />
+          <Route path="replay" element={<PageBoundary><Replay /></PageBoundary>} />
+          <Route path="replay/:handNumber" element={<PageBoundary><ReplayDetail /></PageBoundary>} />
+          <Route path="session" element={<PageBoundary><Session /></PageBoundary>} />
+          <Route path="bankroll" element={<PageBoundary><Bankroll /></PageBoundary>} />
+          <Route path="*" element={<PageBoundary><NotFound /></PageBoundary>} />
         </Route>
       </Routes>
     </BrowserRouter>

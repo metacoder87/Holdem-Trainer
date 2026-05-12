@@ -40,8 +40,8 @@ export default function Shell({ summary, apiStatus, activePlayer, setActivePlaye
           <NavLink to="/games" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
             Play
           </NavLink>
-          <NavLink to="/table" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
-            Table
+          <NavLink to="/session" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+            Session
           </NavLink>
           <NavLink to="/training" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
             Training

@@ -9,16 +9,17 @@ export default function Replay() {
   const [status, setStatus] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!activePlayer) return;
-    getHandHistory(activePlayer, 25)
+    const player = activePlayer || summary.player.name;
+    getHandHistory(player, 25)
       .then((data) => {
         setHands(data);
         setStatus(null);
       })
       .catch((err) => {
+        console.error(err);
         setStatus(err.message || "Failed to load hand history");
       });
-  }, [activePlayer]);
+  }, [activePlayer, summary.player.name]);
 
   return (
     <>
@@ -27,7 +28,7 @@ export default function Replay() {
           <h2>Replay Vault</h2>
           <p>Review hand histories with grading overlays and coach notes.</p>
         </div>
-        {activePlayer ? (
+        {activePlayer || summary.player.name ? (
           <div className="card-grid">
             {hands.length > 0 ? (
               hands.map((hand, index) => (
@@ -39,7 +40,7 @@ export default function Replay() {
                     <span className="module-intensity">
                       Pot ${hand.pot_total ?? 0}
                     </span>
-                    <Link className="btn ghost" to="/table">
+                    <Link className="btn ghost" to={`/replay/${hand.hand_number ?? index + 1}`}>
                       Open Hand
                     </Link>
                   </div>

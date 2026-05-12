@@ -1,6 +1,14 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+export const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+const normalizePath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
+
+export const getWebSocketUrl = (path: string) => {
+  const base = new URL(API_URL);
+  const protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${base.host}${normalizePath(path)}`;
+};
+
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export type Metric = {
   label: string;
@@ -65,6 +73,21 @@ export type TrainingQuiz = {
   acceptable_range?: [number, number];
 };
 
+export type TrainingDrill = {
+  player: string;
+  focus_area: string;
+  configuration: {
+    focus_areas: string[];
+    quiz_distribution: Record<string, number>;
+    difficulty: number;
+    estimated_duration: number;
+    weakness_targets: string[];
+  };
+  scenario: Record<string, JsonValue>;
+  quiz: Record<string, JsonValue>;
+  curriculum: Record<string, JsonValue>;
+};
+
 export type QuizEvaluation = {
   correct: boolean;
   user_answer: number;
@@ -98,7 +121,15 @@ export type GameSession = {
   game_type: string;
   limit_type: string;
   status: string;
+  terminal_reason?: string | null;
   config: Record<string, JsonValue>;
+};
+
+export type WinningHand = {
+  player: string;
+  rank?: string | null;
+  cards?: string[];
+  hole_cards?: string[];
 };
 
 export type HandHistory = {
@@ -108,6 +139,10 @@ export type HandHistory = {
   board?: string[];
   pot_total?: number;
   winners?: string[];
+  winning_hands?: WinningHand[];
+  won_by_fold?: boolean;
+  winner?: string;
+  winning_hand_rank?: string | null;
   actions?: Array<{
     player: string;
     action: string;
@@ -155,6 +190,7 @@ export type LiveGameState = {
   hero_name?: string;
   hero_bankroll?: number;
   hand_number?: number;
+  game_over_reason?: string | null;
 };
 
 export type GameHandState = {
@@ -164,6 +200,7 @@ export type GameHandState = {
   pending_input?: PendingInput | null;
   input_error?: string | null;
   last_hand?: HandHistory | null;
+  terminal_reason?: string | null;
   error?: string | null;
 };
 
@@ -298,8 +335,42 @@ export async function getHandHistory(playerName: string, limit = 50) {
   return requestJson<HandHistory[]>(`/api/hands?${params.toString()}`);
 }
 
+export async function getTrainingDrill(player?: string, focus?: string) {
+  const params = new URLSearchParams();
+  if (player) params.set("player", player);
+  if (focus) params.set("focus", focus);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<TrainingDrill>(`/api/training/drill${query}`);
+}
+
 export async function getHandDetail(playerName: string, handNumber: number) {
   return requestJson<HandHistory>(
     `/api/hands/${encodeURIComponent(playerName)}/${handNumber}`
   );
+}
+
+export async function getChartData(metric: string, player?: string) {
+  const params = new URLSearchParams();
+  if (player) params.set("player", player);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<Array<{ label: string; value: number }>>(
+    `/api/charts/${encodeURIComponent(metric)}${query}`
+  );
+}
+// Analytics Helper
+export type AnalyticsReport = {
+  playing_style: {
+    player_type: string;
+    vpip: number;
+    pfr: number;
+    aggression_factor: number;
+  };
+  recommendations: string[];
+  performance_metrics: Record<string, JsonValue>;
+  strategy_score?: number;
+};
+
+export async function getAnalyticsReport(playerName?: string) {
+  const query = playerName ? `?player=${encodeURIComponent(playerName)}` : "";
+  return requestJson<AnalyticsReport>(`/api/summary/report${query}`);
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import type { ShellContext } from "../components/Shell";
 import NeonTable from "../components/NeonTable";
@@ -6,18 +6,20 @@ import {
   getGameHandState,
   getGameSession,
   startGameHand,
-  submitGameInput,
   type GameHandState,
   type GameSession
 } from "../api/client";
+import GameControls from "../components/GameControls";
 
 export default function Session() {
   const { summary } = useOutletContext<ShellContext>();
+  const gameSurfaceRef = useRef<HTMLDivElement>(null);
   const [session, setSession] = useState<GameSession | null>(null);
   const [handState, setHandState] = useState<GameHandState | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [pendingValue, setPendingValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [isNativeFullscreen, setIsNativeFullscreen] = useState(false);
+  const [isFallbackFullscreen, setIsFallbackFullscreen] = useState(false);
 
   useEffect(() => {
     const sessionId = localStorage.getItem("ph_session_id");
@@ -71,166 +73,179 @@ export default function Session() {
     return () => window.clearTimeout(timer);
   }, [handState, session]);
 
-  const pending = handState?.pending_input || null;
-  const gameState = handState?.state;
+  useEffect(() => {
+    const syncNativeFullscreen = () => {
+      setIsNativeFullscreen(document.fullscreenElement === gameSurfaceRef.current);
+    };
 
-  const handleChoice = async (choice: number) => {
-    if (!session) return;
-    setSubmitting(true);
-    try {
-      const nextState = await submitGameInput(session.id, { choice });
-      setHandState(nextState);
-      setStatus(null);
-    } catch (err) {
-      if (err instanceof Error) {
-        setStatus(err.message);
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
+    document.addEventListener("fullscreenchange", syncNativeFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncNativeFullscreen);
+  }, []);
 
-  const handleNumberSubmit = async () => {
-    if (!session || !pending) return;
-    const value = Number(pendingValue);
-    if (Number.isNaN(value)) {
-      setStatus("Enter a numeric value.");
+  useEffect(() => {
+    if (!isFallbackFullscreen) {
       return;
     }
-    setSubmitting(true);
-    try {
-      const nextState = await submitGameInput(session.id, { value });
-      setHandState(nextState);
-      setStatus(null);
-      setPendingValue("");
-    } catch (err) {
-      if (err instanceof Error) {
-        setStatus(err.message);
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
-  const handleYesNo = async (value: boolean) => {
-    if (!session) return;
-    setSubmitting(true);
-    try {
-      const nextState = await submitGameInput(session.id, { value });
-      setHandState(nextState);
-      setStatus(null);
-    } catch (err) {
-      if (err instanceof Error) {
-        setStatus(err.message);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsFallbackFullscreen(false);
       }
-    } finally {
-      setSubmitting(false);
-    }
-  };
+    };
 
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isFallbackFullscreen]);
+
+  const toggleFullscreen = useCallback(async () => {
+    const target = gameSurfaceRef.current;
+    if (!target) {
+      return;
+    }
+
+    if (isFallbackFullscreen) {
+      setIsFallbackFullscreen(false);
+      return;
+    }
+
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen?.();
+      } finally {
+        setIsNativeFullscreen(false);
+      }
+      return;
+    }
+
+    if (typeof target.requestFullscreen !== "function") {
+      setIsFallbackFullscreen(true);
+      return;
+    }
+
+    try {
+      await target.requestFullscreen();
+      setIsNativeFullscreen(true);
+    } catch {
+      setIsFallbackFullscreen(true);
+    }
+  }, [isFallbackFullscreen]);
+
+  const pending = handState?.pending_input || null;
+  const gameState = handState?.state;
   const handStatus = handState?.status;
-  let actionContent = (
-    <button className="btn primary" type="button" onClick={() => startHand()} disabled={!session}>
-      Start Next Hand
-    </button>
-  );
-
-  if (!pending && handStatus === "in_hand") {
-    actionContent = <div className="module-intensity">Hand in progress...</div>;
-  }
-
-  if (pending?.kind === "menu") {
-    actionContent = (
-      <div className="action-grid">
-        {(pending.options || []).map((option, index) => (
-          <button
-            key={`${option}-${index}`}
-            className="btn ghost"
-            type="button"
-            onClick={() => handleChoice(index + 1)}
-            disabled={submitting}
-          >
-            {option}
-          </button>
-        ))}
-      </div>
-    );
-  } else if (pending?.kind === "number") {
-    actionContent = (
-      <div className="action-input">
-        <label>
-          Amount
-          <input
-            type="number"
-            min={pending.min_value ?? undefined}
-            max={pending.max_value ?? undefined}
-            step={pending.integer_only ? 1 : 0.5}
-            value={pendingValue}
-            onChange={(event) => setPendingValue(event.target.value)}
-          />
-        </label>
-        <button className="btn primary" type="button" onClick={handleNumberSubmit} disabled={submitting}>
-          Submit
-        </button>
-      </div>
-    );
-  } else if (pending?.kind === "yes_no") {
-    actionContent = (
-      <div className="action-grid">
-        <button className="btn primary" type="button" onClick={() => handleYesNo(true)} disabled={submitting}>
-          Yes
-        </button>
-        <button className="btn ghost" type="button" onClick={() => handleYesNo(false)} disabled={submitting}>
-          No
-        </button>
-      </div>
-    );
-  }
+  const terminalReason = handState?.terminal_reason || gameState?.game_over_reason || session?.terminal_reason;
+  const isGameOver = handStatus === "game_over" || Boolean(terminalReason);
+  const isFullscreen = isNativeFullscreen || isFallbackFullscreen;
+  const fullscreenButtonLabel = isFullscreen ? "Exit fullscreen" : "Enter fullscreen";
+  const winningHandSummary = handState?.last_hand?.winning_hands
+    ?.map((hand) => `${hand.player}: ${hand.rank ?? "Winning hand"}${hand.cards?.length ? ` (${hand.cards.join(" ")})` : ""}`)
+    .join("; ");
+  const tableAction = isGameOver
+    ? `Game Over${terminalReason ? `: ${terminalReason.replace(/_/g, " ")}` : ""}`
+    : handStatus === "in_hand"
+      ? "Action Required"
+      : (status || "Waiting...");
 
   return (
-    <>
-      <section className="section split">
-        <div className="panel">
-          <div className="panel-header">
-            <h2>Live Session</h2>
-            <p>{session ? `Session ${session.id}` : "Create a session in the game lobby."}</p>
+    <section className="section session-page">
+      <div className="panel session-game-panel">
+        <div
+          ref={gameSurfaceRef}
+          data-testid="session-game-surface"
+          className={`game-surface${isFullscreen ? " is-fullscreen" : ""}${isFallbackFullscreen ? " is-fallback-fullscreen" : ""}`}
+        >
+          <div className="session-game-header">
+            <div className="panel-header">
+              <h2>Live Session</h2>
+              <p>{session ? `Session ${session.id}` : "Create a session in the game lobby."}</p>
+            </div>
+            <button
+              className="fullscreen-toggle"
+              type="button"
+              aria-label={fullscreenButtonLabel}
+              title={fullscreenButtonLabel}
+              aria-pressed={isFullscreen}
+              onClick={toggleFullscreen}
+            >
+              <span className="fullscreen-glyph" aria-hidden="true" />
+            </button>
           </div>
+
           {!session && (
-            <Link className="btn primary" to="/games">
+            <Link className="btn primary session-lobby-link" to="/games">
               Open Game Lobby
             </Link>
           )}
-          <div className="table-canvas">
-            <NeonTable />
-          </div>
-          <div className="hero-actions">
-            <button
-              className="btn primary"
-              type="button"
-              onClick={() => startHand()}
-              disabled={!session || submitting || Boolean(pending)}
-            >
-              {pending ? "Awaiting Action" : "Play Next Hand"}
-            </button>
-            <Link className="btn ghost" to="/replay">
-              Review Last Hand
-            </Link>
+
+          <div className="table-canvas session-table-canvas">
+            <NeonTable
+              pot={gameState?.pot_size ? `$${gameState.pot_size}` : "$0 POT"}
+              action={tableAction}
+              heroCards={gameState?.hero_cards || []}
+              communityCards={gameState?.community_cards || []}
+              players={gameState?.players || []}
+            />
           </div>
 
-          <div className="action-panel">
-            <div className="panel-header">
-              <h3>Action Console</h3>
-              <p>{pending ? pending.prompt : "Start a hand to receive actions."}</p>
+          <div className="session-playbar">
+            <div className="hero-actions session-hand-actions">
+              <button
+                className="btn primary"
+                type="button"
+                onClick={() => startHand()}
+                disabled={!session || submitting || Boolean(pending) || isGameOver}
+              >
+                {isGameOver ? "Game Over" : pending ? "Awaiting Action" : "Play Next Hand"}
+              </button>
+              <Link className="btn ghost" to="/replay">
+                Review Last Hand
+              </Link>
             </div>
-            {actionContent}
-            {(handState?.error || handState?.input_error || status) && (
-              <div className="form-status">
-                {handState?.error || handState?.input_error || status}
+
+            <div className="action-panel session-action-panel">
+              <div className="panel-header">
+                <h3>Action Console</h3>
               </div>
-            )}
+              {session && (
+                <GameControls
+                  sessionId={session.id}
+                  pendingInput={pending}
+                  onAction={() => {
+                    getGameHandState(session.id).then(setHandState).catch(() => null);
+                    setStatus(null);
+                  }}
+                />
+              )}
+              {!pending && handStatus === "in_hand" && (
+                <div className="module-intensity">Hand in progress...</div>
+              )}
+              {!pending && handStatus !== "in_hand" && !isGameOver && (
+                <div className="text-slate-500 italic">Start a hand to receive actions.</div>
+              )}
+              {isGameOver && (
+                <div className="text-slate-500 italic">
+                  Session ended{terminalReason ? `: ${terminalReason.replace(/_/g, " ")}` : ""}.
+                </div>
+              )}
+
+              {(handState?.error || handState?.input_error || status) && (
+                <div className="form-status">
+                  {handState?.error || handState?.input_error || status}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="session-secondary-grid">
+        <div className="panel session-detail-panel">
+          <div className="panel-header">
+            <h2>Hand Readout</h2>
+            <p>Current state and last-result detail.</p>
           </div>
 
-          {gameState && (
+          {gameState ? (
             <div className="session-readout">
               <div className="demo-row">
                 <span>Phase</span>
@@ -255,10 +270,12 @@ export default function Session() {
                 </span>
               </div>
             </div>
+          ) : (
+            <div className="text-slate-500 italic">Session telemetry appears after a hand starts.</div>
           )}
 
           {handState?.last_hand && (
-            <div className="demo-hand" style={{ marginTop: 16 }}>
+            <div className="demo-hand last-hand-card">
               <div className="demo-row">
                 <span>Last Hand</span>
                 <span>#{handState.last_hand.hand_number ?? "-"}</span>
@@ -268,6 +285,14 @@ export default function Session() {
                 <span>{handState.last_hand.winners?.join(", ") || "-"}</span>
               </div>
               <div className="demo-row">
+                <span>Winning Hand</span>
+                <span>
+                  {handState.last_hand.won_by_fold
+                    ? "Won by fold"
+                    : winningHandSummary || handState.last_hand.winning_hand_rank || "-"}
+                </span>
+              </div>
+              <div className="demo-row">
                 <span>Pot</span>
                 <span>${handState.last_hand.pot_total ?? 0}</span>
               </div>
@@ -275,7 +300,7 @@ export default function Session() {
           )}
         </div>
 
-        <div className="panel">
+        <div className="panel session-detail-panel">
           <div className="panel-header">
             <h2>Live Coaching</h2>
             <p>Real-time feedback pipeline for {summary.player.name}.</p>
@@ -295,7 +320,7 @@ export default function Session() {
             Adjust Training Plan
           </Link>
         </div>
-      </section>
-    </>
+      </div>
+    </section>
   );
 }

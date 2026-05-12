@@ -43,7 +43,18 @@ export default function Home() {
         <div className="hero-visual fade-up delay-2">
           <div className="table-shell">
             <div className="table-canvas">
-              <NeonTable />
+              <NeonTable
+                pot="$3.8K POT"
+                action="Turn decision"
+                heroCards={["A♠", "K♥"]}
+                communityCards={["10♦", "J♣", "Q♠", "2♥"]}
+                players={[
+                  { name: "Hero", bankroll: 12800, current_bet: 1200, folded: false, all_in: false, isHero: true },
+                  { name: "Vega", bankroll: 9400, current_bet: 1200, folded: false, all_in: false },
+                  { name: "Nyx", bankroll: 0, current_bet: 0, folded: true, all_in: false },
+                  { name: "Cipher", bankroll: 5200, current_bet: 0, folded: false, all_in: false }
+                ]}
+              />
             </div>
             <div className="table-controls">
               <div className="control-chip">Fold</div>

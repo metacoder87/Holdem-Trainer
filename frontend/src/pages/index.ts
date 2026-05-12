@@ -3,6 +3,7 @@ export { default as Training } from "./Training";
 export { default as Table } from "./Table";
 export { default as Analytics } from "./Analytics";
 export { default as Replay } from "./Replay";
+export { default as ReplayDetail } from "./ReplayDetail";
 export { default as Session } from "./Session";
 export { default as Drill } from "./Drill";
 export { default as NotFound } from "./NotFound";
