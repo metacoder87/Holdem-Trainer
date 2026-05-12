@@ -61,3 +61,15 @@ logs/
 node_modules/
 frontend/dist/
 frontend/.env
+
+# Generated gameplay data
+data/hand_histories/
+
+# Temp / tool directories
+.audit_tmp/
+.claude/
+.pytest_tmp/
+
+# Test output
+results.txt
+test_output.txt
