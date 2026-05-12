@@ -137,10 +137,26 @@ def _load_player_record(player_name: Optional[str]) -> Optional[Dict[str, Any]]:
 
 
 def _get_sessions(record: Dict[str, Any]) -> List[Optional[Dict[str, Any]]]:
-    sessions = record.get("sessions") or []
+    sessions = _sessions_for_record(record)
     last_session = record.get("last_session") or (sessions[-1] if sessions else {})
     prev_session = sessions[-2] if len(sessions) >= 2 else {}
     return [last_session, prev_session]
+
+
+def _sessions_for_record(record: Dict[str, Any], limit: int = 100) -> List[Dict[str, Any]]:
+    sessions = record.get("sessions") or []
+    if not isinstance(sessions, list):
+        sessions = []
+
+    if not sessions and record.get("name"):
+        try:
+            sessions = _get_manager().get_sessions(str(record["name"]), limit=limit)
+        except Exception:
+            sessions = []
+
+    records = [dict(session) for session in sessions if isinstance(session, dict)]
+    records.sort(key=lambda s: s.get("updated_at") or s.get("ended_at") or s.get("started_at") or s.get("created_at") or "")
+    return records[-limit:]
 
 
 def _build_training_tracks(record: Dict[str, Any], last_session: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -349,3 +365,78 @@ def _default_summary() -> Dict[str, Any]:
             {"time": "00:00", "label": "Session start", "detail": "No recent hands yet"},
         ],
     }
+
+def get_chart_data(player_name: str, metric: str = "vpip") -> List[Dict[str, Any]]:
+    """
+    Returns session-by-session data for a specific metric.
+    """
+    record = _load_player_record(player_name)
+    if not record:
+        return []
+
+    sessions = _sessions_for_record(record)
+    if not sessions:
+        return []
+
+    data = []
+    for i, session in enumerate(sessions):
+        val = _metric(session, metric, 0.0)
+        if metric in ["vpip", "pfr", "decision_accuracy"]:
+            val *= 100
+            
+        data.append({
+            "label": f"Session {i+1}",
+            "value": round(val, 1)
+        })
+    
+    return data
+
+
+def get_analytics_report(player_name: str) -> Dict[str, Any]:
+    """
+    Generate a deep analytics report for the player.
+    """
+    from stats.analyzer import PlayerAnalyzer
+
+    record = _load_player_record(player_name)
+    if not record:
+        return {
+            "playing_style": {"player_type": "Unknown", "vpip": 0, "pfr": 0, "aggression_factor": 0},
+            "recommendations": ["Play more hands to generate data"],
+            "performance_metrics": {},
+            "strategy_score": 0
+        }
+
+    analyzer = PlayerAnalyzer()
+    sessions = _sessions_for_record(record)
+    total_hands = 0
+    vpip_sum = 0
+    pfr_sum = 0
+    agg_sum = 0
+    
+    for sess in sessions:
+        hands = int(sess.get("hands_played", 0))
+        total_hands += hands
+        vpip_sum += float(sess.get("vpip", 0)) * hands
+        pfr_sum += float(sess.get("pfr", 0)) * hands
+        agg_sum += float(sess.get("aggression_factor", 0)) * hands
+
+    agg_stats = {
+        "games_played": len(sessions),
+        "games_won": record.get("games_won", 0),
+        "total_winnings": record.get("total_winnings", 0),
+        "vpip": vpip_sum / total_hands if total_hands > 0 else 0,
+        "pfr": pfr_sum / total_hands if total_hands > 0 else 0,
+        "aggression_factor": agg_sum / total_hands if total_hands > 0 else 0,
+    }
+
+    report = analyzer.generate_player_report(agg_stats)
+    
+    # Calculate a synthetic strategy score (0-100)
+    # Penalize deviation from optimal VPIP/PFR/AGG
+    vpip_diff = abs(agg_stats["vpip"] - 0.24)
+    pfr_diff = abs(agg_stats["pfr"] - 0.18)
+    score = 100 - (vpip_diff * 100 + pfr_diff * 100)
+    report["strategy_score"] = max(0, min(100, int(score)))
+
+    return report

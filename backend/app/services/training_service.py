@@ -1,10 +1,13 @@
 from typing import Any, Dict, Optional
 
-from app.core.paths import ensure_src_path
+from app.core.paths import ensure_src_path, get_data_file
 
 ensure_src_path()
 
+from data.manager import DataManager
+from training.adaptive_trainer import AdaptiveTrainer
 from training.content_loader import ContentLoader
+from training.progression_analyzer import WeaknessType
 from training.trainer import PokerTrainer, QuizType
 
 
@@ -57,3 +60,45 @@ def generate_quiz(
 def evaluate_quiz(correct_answer: float, user_answer: float, *, tolerance: float = 0.05) -> Dict[str, Any]:
     trainer = PokerTrainer()
     return trainer.evaluate_answer(float(correct_answer), float(user_answer), tolerance=float(tolerance))
+
+
+def _weakness_from_value(value: str) -> Optional[WeaknessType]:
+    normalized = (value or "").strip().lower()
+    for weakness in WeaknessType:
+        if weakness.value == normalized:
+            return weakness
+    return None
+
+
+def generate_drill(player_name: Optional[str] = None, focus: Optional[str] = None) -> Dict[str, Any]:
+    manager = DataManager(data_file=str(get_data_file()))
+    record = manager.get_player(player_name) if player_name else None
+
+    weaknesses = []
+    if focus:
+        weakness = _weakness_from_value(focus)
+        if weakness:
+            weaknesses.append(weakness)
+
+    if not weaknesses and isinstance(record, dict):
+        for value in record.get("weaknesses") or []:
+            weakness = _weakness_from_value(str(value))
+            if weakness:
+                weaknesses.append(weakness)
+
+    if not weaknesses:
+        weaknesses = [WeaknessType.POOR_POT_ODDS]
+
+    player = player_name or (record.get("name") if isinstance(record, dict) else None) or "Guest"
+    trainer = AdaptiveTrainer(player)
+    configuration = trainer.configure_from_weaknesses(weaknesses)
+    focus_weakness = weaknesses[0]
+
+    return {
+        "player": player,
+        "focus_area": focus_weakness.value,
+        "configuration": configuration,
+        "scenario": trainer.create_practice_scenario(focus_weakness),
+        "quiz": trainer.generate_targeted_quiz(focus_weakness),
+        "curriculum": trainer.generate_personalized_curriculum(weaknesses),
+    }

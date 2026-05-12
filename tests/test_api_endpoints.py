@@ -69,6 +69,21 @@ def test_training_quiz_and_evaluation(client):
     assert evaluate.json()["correct"] is True
 
 
+def test_training_drill_endpoint(client):
+    response = client.get("/api/training/drill?player=Guest&focus=poor_pot_odds")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["focus_area"] == "poor_pot_odds"
+    assert "scenario" in payload
+    assert "quiz" in payload
+
+
+def test_chart_data_uses_recorded_sessions_only(client):
+    response = client.get("/api/charts/vpip?player=UnknownUser")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 def test_players_endpoints(client):
     missing = client.get("/api/players/UnknownUser")
     assert missing.status_code == 404
@@ -99,11 +114,25 @@ def test_hand_history_endpoints(client, tmp_path, monkeypatch):
             "winners": ["HistoryUser"],
         },
     )
+    manager.append_hand_history(
+        "HistoryUser",
+        {
+            "hand_number": 2,
+            "hero_hole_cards": ["2h", "2d"],
+            "board": ["2c", "7d", "Ts"],
+            "pot_total": 40,
+            "winners": ["Villain"],
+        },
+    )
 
     listing = client.get("/api/hands?player=HistoryUser&limit=5")
     assert listing.status_code == 200
-    assert len(listing.json()) == 1
+    assert len(listing.json()) == 2
 
     detail = client.get("/api/hands/HistoryUser/1")
     assert detail.status_code == 200
     assert detail.json()["hand_number"] == 1
+
+    filtered = client.get("/api/hands/filter?player=HistoryUser&winner=hero&min_pot=100")
+    assert filtered.status_code == 200
+    assert [hand["hand_number"] for hand in filtered.json()] == [1]
