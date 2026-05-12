@@ -107,9 +107,90 @@ class GameEngine:
         self._raise_closed_players = set()
         self._game_analyzer = None
         self._decision_analyzer = None
+        self._current_hand_players: List[Player] = []
+        self._last_winning_hands: List[Dict[str, Any]] = []
+        self._last_won_by_fold = False
+        self._last_game_over_reason: Optional[str] = None
 
     def _is_fixed_limit(self) -> bool:
         return str(self.limit_type).lower() in {"limit", "fixed_limit", "fixed-limit"}
+
+    def _get_players_with_chips(self) -> List[Player]:
+        if not self.table:
+            return []
+        get_players = getattr(self.table, "get_players_with_chips", None)
+        if callable(get_players):
+            return list(get_players())
+        return [p for p in self.table.get_players_in_order() if p.bankroll > 0]
+
+    def _get_current_hand_players(self) -> List[Player]:
+        if not self.table:
+            return []
+
+        seated = set(self.table.get_players_in_order())
+        if self._current_hand_players:
+            return [p for p in self._current_hand_players if p in seated]
+
+        return [
+            p for p in self.table.get_players_in_order()
+            if p.bankroll > 0 or p.current_bet > 0 or p.all_in or bool(p.hole_cards)
+        ]
+
+    def _get_unfolded_hand_players(self) -> List[Player]:
+        return [p for p in self._get_current_hand_players() if not p.folded]
+
+    def _get_actionable_players(self, players: Optional[List[Player]] = None) -> List[Player]:
+        round_players = players if players is not None else self._get_current_hand_players()
+        return [
+            p for p in round_players
+            if not p.folded and not p.all_in and p.bankroll > 0
+        ]
+
+    def _has_live_betting_opponent(self, player: Player) -> bool:
+        return any(
+            p is not player and not p.folded and not p.all_in and p.bankroll > 0
+            for p in self._get_current_hand_players()
+        )
+
+    def _prepare_players_for_next_hand(self) -> List[Player]:
+        if not self.table:
+            return []
+
+        if not self.tournament_mode:
+            self.table.remove_busted_players(keep=[self.human_player])
+
+        if hasattr(self.table, "_update_positions"):
+            self.table._update_positions()
+
+        players = self._get_players_with_chips()
+        self._last_game_over_reason = self.get_game_over_reason()
+        if self._last_game_over_reason:
+            self._current_hand_players = []
+            return []
+
+        self._current_hand_players = list(players)
+        return self._current_hand_players
+
+    def get_game_over_reason(self) -> Optional[str]:
+        """Return a terminal reason if another hand cannot be dealt."""
+        if not self.table:
+            return "not_enough_players"
+
+        if self.tournament_mode:
+            active_players = self.table.get_players_in_tournament()
+            if self.human_player not in active_players:
+                return "hero_eliminated"
+            if len(active_players) <= 1:
+                return "tournament_complete"
+            return None
+
+        if self.human_player.bankroll <= 0:
+            return "hero_busted"
+
+        if len(self._get_players_with_chips()) < 2:
+            return "not_enough_players"
+
+        return None
 
     def _get_limit_bet_size(self, betting_round: BettingRound) -> int:
         base = int(self.big_blind)
@@ -134,6 +215,8 @@ class GameEngine:
         self._raises_in_round = 0
 
     def _is_raise_allowed_for_player(self, player: Player) -> bool:
+        if not self._has_live_betting_opponent(player):
+            return False
         if player in self._raise_closed_players:
             return False
         if self._is_fixed_limit() and self._raises_in_round >= self.LIMIT_MAX_BETS_PER_ROUND:
@@ -394,7 +477,8 @@ class GameEngine:
         print("\n" + "="*70)
         print("🎲 DEALING HOLE CARDS...")
         
-        for player in self.table.get_players_in_order():
+        players_to_deal = self._get_current_hand_players() or self._get_players_with_chips()
+        for player in players_to_deal:
             cards = self.deck.deal_cards(2)
             player.deal_hole_cards(cards)
             if player == self.human_player:
@@ -417,7 +501,7 @@ class GameEngine:
 
         if ante > 0:
             print("   Collecting antes...")
-            for player in self.table.get_players_in_order():
+            for player in self._get_current_hand_players():
                 if player.bankroll <= 0:
                     continue
                 pot_before = self.pot.total if self.pot else 0
@@ -437,7 +521,7 @@ class GameEngine:
                 )
         
         # Small blind
-        if sb_player.bankroll > 0:
+        if sb_player is not None and sb_player.bankroll > 0:
             sb_amount = min(self.small_blind, sb_player.bankroll)
             if sb_amount > 0:
                 pot_before = self.pot.total if self.pot else 0
@@ -458,7 +542,7 @@ class GameEngine:
                 )
 
         # Big blind
-        if bb_player.bankroll > 0:
+        if bb_player is not None and bb_player.bankroll > 0:
             bb_amount = min(self.big_blind, bb_player.bankroll)
             if bb_amount > 0:
                 pot_before = self.pot.total if self.pot else 0
@@ -487,7 +571,8 @@ class GameEngine:
         """
         self.current_betting_round = betting_round
 
-        active_players = [p for p in self.table.get_players_in_order() if not p.folded]
+        players_in_round = self._get_current_hand_players()
+        active_players = [p for p in players_in_round if not p.folded]
         if len(active_players) < 2:
             return
 
@@ -503,24 +588,27 @@ class GameEngine:
             dealer_pos = self.table.get_player_position(self.table.get_dealer_player())
             start_seat = (dealer_pos + 1) % 9 if dealer_pos is not None else 0
 
-        players_in_round = self.table.get_players_in_order()
         num_players = len(players_in_round)
+        if num_players == 0:
+            return
         player_index = next((i for i, p in enumerate(players_in_round) if p.position >= start_seat), 0)
 
         players_acted = {p: False for p in players_in_round}
 
-        action_count = 0
-        while action_count < num_players * 2:  # Safety break
-            player = players_in_round[player_index]
-
-            if player.folded or player.all_in:
-                player_index = (player_index + 1) % num_players
-                action_count += 1
-                continue
-
-            # Check if round is over
+        while True:
+            # Check before choosing a player so all-in-only streets end without
+            # prompting a lone player to bet chips nobody can call.
             if self._is_betting_round_complete(players_in_round, players_acted, highest_bet):
                 break
+
+            if not self._get_actionable_players(players_in_round):
+                break
+
+            player = players_in_round[player_index]
+
+            if player.folded or player.all_in or player.bankroll <= 0:
+                player_index = (player_index + 1) % num_players
+                continue
 
             # Get player action
             action, amount = self._get_player_action(player, self.game_state, highest_bet)
@@ -530,6 +618,13 @@ class GameEngine:
             # Treat "all-in" as an aggressive action (bet/raise) that will be clamped.
             if action == PlayerAction.ALL_IN and self._is_fixed_limit():
                 action = PlayerAction.RAISE
+
+            if action == PlayerAction.CHECK and player.current_bet < highest_bet:
+                action = PlayerAction.CALL
+                amount = int(highest_bet)
+            elif action == PlayerAction.CALL and player.current_bet >= highest_bet:
+                action = PlayerAction.CHECK
+                amount = 0
 
             # Process action
             if action == PlayerAction.FOLD:
@@ -720,7 +815,6 @@ class GameEngine:
                     )
 
             player_index = (player_index + 1) % num_players
-            action_count += 1
 
     def _is_betting_round_complete(self, players: List[Player], players_acted: Dict[Player, bool], highest_bet: float) -> bool:
         """
@@ -734,8 +828,17 @@ class GameEngine:
         if len(active_players) <= 1:
             return True
 
+        actionable_players = self._get_actionable_players(players)
+        if len(actionable_players) <= 1:
+            # A lone player may still need to call an all-in wager, but cannot
+            # open a fresh bet or raise into a field with no live caller.
+            for player in actionable_players:
+                if player.current_bet < highest_bet:
+                    return False
+            return True
+
         # All remaining players must have acted and have the same bet amount
-        for player in active_players:
+        for player in actionable_players:
             if not players_acted[player] and not player.all_in:
                 return False
             if player.current_bet != highest_bet and not player.all_in:
@@ -781,7 +884,7 @@ class GameEngine:
                 'big_blind': self.big_blind,
                 'betting_round': betting_round,
                 'player': player,
-                'players_in_hand': len([p for p in self.table.get_players_in_order() if not p.folded]),
+                'players_in_hand': len(self._get_unfolded_hand_players()),
                 'limit_type': self.limit_type,
                 'limit_bet_size': limit_bet_size,
                 'raise_allowed': self._is_raise_allowed_for_player(player),
@@ -801,7 +904,8 @@ class GameEngine:
             }
 
         acting_player = player or self.human_player
-        highest_bet = max(p.current_bet for p in self.table.get_players_in_order())
+        round_players = self._get_current_hand_players() or self.table.get_players_in_order()
+        highest_bet = max((p.current_bet for p in round_players), default=0)
         can_check = acting_player.current_bet == highest_bet
 
         min_raise = int(self._min_raise_increment) if int(self._min_raise_increment) > 0 else int(self.big_blind)
@@ -938,6 +1042,8 @@ class GameEngine:
                 # No-limit: if raising is closed, all-in is only legal as a short call.
                 if not raise_allowed:
                     allow_all_in = call_amount > 0 and int(self.human_player.bankroll) <= int(call_amount)
+                elif call_amount == 0 and not self._has_live_betting_opponent(self.human_player):
+                    allow_all_in = False
 
             if allow_all_in:
                 options.append(('All-In', PlayerAction.ALL_IN))
@@ -1561,7 +1667,7 @@ class GameEngine:
         Returns:
             List of winning players
         """
-        active_players = [p for p in self.table.get_players_in_order() if not p.folded]
+        active_players = self._get_unfolded_hand_players()
         
         if len(active_players) == 1:
             # Only one player remains
@@ -1596,8 +1702,11 @@ class GameEngine:
         if not winners or not self.pot:
             return
 
-        # If everyone else folded, the last player wins the entire pot (side pots irrelevant).
-        if len(winners) == 1:
+        active_players = self._get_unfolded_hand_players()
+        won_by_fold = len(active_players) == 1
+
+        # If everyone else folded, the last player wins all remaining pots.
+        if won_by_fold and len(winners) == 1:
             winners[0].add_winnings(self.pot.total)
             self.pot.reset()
             return
@@ -1607,7 +1716,7 @@ class GameEngine:
 
         player_best_hands: Dict[Player, Hand] = {}
         if self.table:
-            for player in self.table.get_players_in_hand():
+            for player in active_players:
                 if not player.hole_cards:
                     continue
                 all_cards = player.hole_cards + self.community_cards
@@ -1637,6 +1746,12 @@ class GameEngine:
             
     def play_hand(self) -> None:
         """Play a complete hand from start to finish."""
+        players_for_hand = self._prepare_players_for_next_hand()
+        if len(players_for_hand) < 2:
+            reason = self._last_game_over_reason or "not_enough_players"
+            self.game_state = GameState.HAND_COMPLETE
+            raise ValueError(f"Cannot start hand: {reason}")
+
         # Initialize hand
         self.community_cards = []
         self.deck = Deck()
@@ -1646,7 +1761,7 @@ class GameEngine:
             self.pot = Pot()
         
         # Reset players for new hand
-        for player in self.table.get_players_in_order():
+        for player in players_for_hand:
             player.reset_for_new_hand()
             player.hands_played += 1
             
@@ -1667,7 +1782,7 @@ class GameEngine:
         self._run_betting_round(BettingRound.PREFLOP)
         
         # Check if hand is over (everyone folded except one)
-        active_players = [p for p in self.table.get_players_in_order() if not p.folded]
+        active_players = self._get_unfolded_hand_players()
         if len(active_players) == 1:
             self._complete_hand()
             return
@@ -1676,11 +1791,11 @@ class GameEngine:
         self.game_state = GameState.FLOP
         self._deal_flop()
         self.session_tracker.set_board([str(c) for c in self.community_cards])
-        for p in self.table.get_players_in_order():
+        for p in self._get_current_hand_players():
             p.reset_for_new_round()
         self._run_betting_round(BettingRound.FLOP)
         
-        active_players = [p for p in self.table.get_players_in_order() if not p.folded]
+        active_players = self._get_unfolded_hand_players()
         if len(active_players) == 1:
             self._complete_hand()
             return
@@ -1689,11 +1804,11 @@ class GameEngine:
         self.game_state = GameState.TURN
         self._deal_turn()
         self.session_tracker.set_board([str(c) for c in self.community_cards])
-        for p in self.table.get_players_in_order():
+        for p in self._get_current_hand_players():
             p.reset_for_new_round()
         self._run_betting_round(BettingRound.TURN)
         
-        active_players = [p for p in self.table.get_players_in_order() if not p.folded]
+        active_players = self._get_unfolded_hand_players()
         if len(active_players) == 1:
             self._complete_hand()
             return
@@ -1702,13 +1817,37 @@ class GameEngine:
         self.game_state = GameState.RIVER
         self._deal_river()
         self.session_tracker.set_board([str(c) for c in self.community_cards])
-        for p in self.table.get_players_in_order():
+        for p in self._get_current_hand_players():
             p.reset_for_new_round()
         self._run_betting_round(BettingRound.RIVER)
         
         # Showdown
         self.game_state = GameState.SHOWDOWN
         self._complete_hand()
+
+    def _build_winning_hand_details(self, winners: List[Player], *, won_by_fold: bool) -> List[Dict[str, Any]]:
+        """Build serializable showdown details for hand history and UI."""
+        if won_by_fold:
+            return []
+
+        details: List[Dict[str, Any]] = []
+        for winner in winners:
+            cards = list(winner.hole_cards) + list(self.community_cards)
+            if len(cards) < 5:
+                continue
+            try:
+                best_hand = Hand.best_hand_from_cards(cards)
+            except Exception:
+                continue
+            details.append(
+                {
+                    "player": winner.name,
+                    "rank": str(best_hand.rank),
+                    "cards": [str(card) for card in best_hand.cards],
+                    "hole_cards": [str(card) for card in winner.hole_cards],
+                }
+            )
+        return details
         
     def _complete_hand(self) -> None:
         """Complete the hand, determine winners, and distribute pot."""
@@ -1716,6 +1855,11 @@ class GameEngine:
         try:
             winners = self._determine_winners()
             pot_total = int(self.pot.total) if self.pot else 0
+            active_players = self._get_unfolded_hand_players()
+            won_by_fold = len(active_players) == 1
+            winning_hands = self._build_winning_hand_details(winners, won_by_fold=won_by_fold)
+            self._last_won_by_fold = bool(won_by_fold)
+            self._last_winning_hands = list(winning_hands)
             for winner in winners:
                 winner.hands_won += 1
             
@@ -1735,12 +1879,12 @@ class GameEngine:
                 print(f"   Split pot between: {', '.join(w.name for w in winners)}")
                 print(f"   Pot: ${self.pot.total:.0f} (${self.pot.total//len(winners):.0f} each)")
             
-            # Show winning hand if it was a showdown
-            active_players = [p for p in self.table.get_players_in_order() if not p.folded]
-            if len(active_players) > 1 and self.community_cards:
-                for winner in winners:
-                    if winner.hole_cards:
-                        print(f"   {winner.name}'s hand: {winner.hole_cards[0]} {winner.hole_cards[1]}")
+            if won_by_fold:
+                print("   Result: won by fold")
+            elif winning_hands:
+                for detail in winning_hands:
+                    cards = " ".join(detail.get("cards", []))
+                    print(f"   {detail['player']} wins with {detail['rank']}: {cards}")
             
             print("="*70)
             
@@ -1748,6 +1892,8 @@ class GameEngine:
             self.session_tracker.end_hand(
                 winners=[w.name for w in winners],
                 pot_total=pot_total,
+                winning_hands=winning_hands,
+                won_by_fold=won_by_fold,
             )
             self._persist_last_hand_history(winners=winners, pot_total=pot_total)
 
@@ -1773,6 +1919,8 @@ class GameEngine:
             self._check_blind_increase()
             self._handle_eliminations()
 
+        self._last_game_over_reason = self.get_game_over_reason()
+
     def _build_hand_meta(self) -> Dict[str, Any]:
         """Build metadata captured at the start of a hand for replay/training."""
         if not self.table:
@@ -1781,7 +1929,7 @@ class GameEngine:
         ante = int(getattr(self, "ante", 0) or 0) if self.tournament_mode else 0
 
         players: List[Dict[str, Any]] = []
-        for p in self.table.get_players_in_order():
+        for p in self._get_current_hand_players():
             players.append(
                 {
                     "name": p.name,
@@ -1801,7 +1949,7 @@ class GameEngine:
             sb_player = None
             bb_player = None
 
-        return {
+        meta = {
             "game_type": "tournament" if self.tournament_mode else "cash",
             "tournament_mode": bool(self.tournament_mode),
             "limit_type": str(self.limit_type),
@@ -1816,6 +1964,10 @@ class GameEngine:
             "hero_position": int(getattr(self.human_player, "position", 0)),
             "players": players,
         }
+        external_session_id = getattr(self, "external_session_id", None)
+        if external_session_id:
+            meta["session_id"] = str(external_session_id)
+        return meta
 
     def _persist_last_hand_history(self, *, winners: List[Player], pot_total: int) -> None:
         """Persist the last completed hand to the per-player JSONL history (best-effort)."""
@@ -1832,9 +1984,23 @@ class GameEngine:
 
         meta = last_hand.get("meta")
         if isinstance(meta, dict):
+            external_session_id = getattr(self, "external_session_id", None)
+            if external_session_id:
+                last_hand.setdefault("session_id", str(external_session_id))
+                meta.setdefault("session_id", str(external_session_id))
             meta.setdefault("hero_stack_end", int(getattr(self.human_player, "bankroll", 0)))
             meta.setdefault("hero_won", any(w.name == self.human_player.name for w in winners))
             meta.setdefault("pot_total", int(pot_total))
+            meta.setdefault("won_by_fold", bool(getattr(self, "_last_won_by_fold", False)))
+            if self._last_winning_hands:
+                meta.setdefault("winning_hands", list(self._last_winning_hands))
+
+        if winners:
+            last_hand.setdefault("winner", winners[0].name)
+        if self._last_winning_hands:
+            last_hand.setdefault("winning_hands", list(self._last_winning_hands))
+            last_hand.setdefault("winning_hand_rank", self._last_winning_hands[0].get("rank"))
+        last_hand.setdefault("won_by_fold", bool(getattr(self, "_last_won_by_fold", False)))
 
         try:
             append_fn = getattr(self.data_manager, "append_hand_history", None)
@@ -2107,9 +2273,14 @@ class GameEngine:
         try:
             while True:
                 # Cash game - check if human wants to continue
-                if self.human_player.bankroll == 0:
+                game_over_reason = self.get_game_over_reason()
+                if game_over_reason == "hero_busted":
                     print("\n❌ You're out of chips! Game over.")
                     result = "busted"
+                    break
+                if game_over_reason == "not_enough_players":
+                    print("\nNot enough players with chips remain. Game over.")
+                    result = "complete"
                     break
 
                 # Play a hand
@@ -2157,5 +2328,6 @@ class GameEngine:
                 'small_blind': self.small_blind,
                 'big_blind': self.big_blind,
                 'blind_level': self.blind_level if self.tournament_mode else None
-            }
+            },
+            'game_over_reason': self.get_game_over_reason()
         }

@@ -274,7 +274,14 @@ class SessionTracker:
         if payload.get("quality") == "optimal":
             self._metrics.decisions_optimal += 1
 
-    def end_hand(self, *, winners: List[str], pot_total: int) -> None:
+    def end_hand(
+        self,
+        *,
+        winners: List[str],
+        pot_total: int,
+        winning_hands: Optional[List[Dict[str, Any]]] = None,
+        won_by_fold: bool = False,
+    ) -> None:
         if self._metrics is None or not self.hand_history:
             return
 
@@ -286,6 +293,9 @@ class SessionTracker:
 
         self.hand_history[-1]["winners"] = list(winners)
         self.hand_history[-1]["pot_total"] = int(pot_total)
+        self.hand_history[-1]["won_by_fold"] = bool(won_by_fold)
+        if winning_hands is not None:
+            self.hand_history[-1]["winning_hands"] = list(winning_hands)
         self.hand_history[-1]["ended_at"] = datetime.now().isoformat()
 
     def record_quiz_result(self, *, quiz_type: str, correct: bool) -> None:

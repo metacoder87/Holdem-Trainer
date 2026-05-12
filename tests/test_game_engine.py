@@ -311,6 +311,152 @@ class TestGameEngine:
         assert any(entry[0] == human and entry[1] == 150 for entry in action_log)
         assert human.current_bet == 150
 
+    def test_busted_cash_player_is_excluded_from_next_hand(self):
+        """Busted cash players should not be dealt into future hands."""
+        self.game_engine._setup_cash_game_table(2, 10, 20)
+        players = self.game_engine.table.get_players_in_order()
+        busted = next(p for p in players if p != self.human_player)
+        busted.bankroll = 0
+
+        players_for_hand = self.game_engine._prepare_players_for_next_hand()
+        self.game_engine._deal_hole_cards()
+
+        assert busted not in self.game_engine.table.get_players_in_order()
+        assert busted not in players_for_hand
+        assert busted.hole_cards == []
+        assert all(player.hole_cards for player in players_for_hand)
+
+    def test_invalid_check_facing_all_in_is_forced_to_call(self):
+        """A player facing an all-in bet cannot check through for free."""
+        self.game_engine._setup_cash_game_table(2, 10, 20)
+        for player in self.game_engine.table.get_players_in_order():
+            player.bankroll = 100
+        self.game_engine._post_blinds()
+
+        players = self.game_engine.table.get_players_in_order()
+        human = self.human_player
+        opponents = [p for p in players if p != human]
+
+        def mock_get_player_action(player, game_state, highest_bet):
+            if player == human:
+                return PlayerAction.ALL_IN, 0
+            return PlayerAction.CHECK, 0
+
+        with patch.object(self.game_engine, "_get_player_action", side_effect=mock_get_player_action):
+            self.game_engine._run_betting_round(BettingRound.PREFLOP)
+
+        assert human.current_bet == 100
+        assert all(opponent.current_bet == 100 for opponent in opponents)
+        assert all(opponent.bankroll == 0 for opponent in opponents)
+
+    def test_betting_round_skips_when_only_one_player_can_bet_and_nobody_owes_call(self):
+        """Do not ask a player to bet when every opponent is already all-in."""
+        self.game_engine._setup_cash_game_table(1, 10, 20)
+        opponent = next(p for p in self.game_engine.table.get_players_in_order() if p != self.human_player)
+        self.game_engine._current_hand_players = [self.human_player, opponent]
+        self.human_player.bankroll = 500
+        self.human_player.current_bet = 0
+        opponent.bankroll = 0
+        opponent.current_bet = 0
+        opponent.all_in = True
+
+        with patch.object(self.game_engine, "_get_player_action") as action_mock:
+            self.game_engine._run_betting_round(BettingRound.FLOP)
+
+        action_mock.assert_not_called()
+
+    def test_uncallable_raise_is_treated_as_call_only(self):
+        """A lone live player may call an all-in amount but cannot add extra chips."""
+        self.game_engine._setup_cash_game_table(1, 10, 20)
+        opponent = next(p for p in self.game_engine.table.get_players_in_order() if p != self.human_player)
+        self.game_engine._current_hand_players = [self.human_player, opponent]
+        self.game_engine.pot = Pot()
+
+        self.human_player.bankroll = 500
+        self.human_player.current_bet = 0
+        opponent.bankroll = 0
+        opponent.current_bet = 50
+        opponent.all_in = True
+        self.game_engine.pot.add_bet(opponent, 50)
+
+        with patch.object(
+            self.game_engine,
+            "_get_player_action",
+            return_value=(PlayerAction.RAISE, 200),
+        ):
+            self.game_engine._run_betting_round(BettingRound.FLOP)
+
+        assert self.human_player.current_bet == 50
+        assert self.human_player.bankroll == 450
+        assert self.game_engine.pot.total == 100
+
+    def test_side_pot_distribution_uses_per_pot_eligibility_for_single_best_hand(self):
+        """The best overall hand should not win side pots it is not eligible for."""
+        self.game_engine._setup_cash_game_table(2, 10, 20)
+        players = self.game_engine.table.get_players_in_order()
+        short_stack, medium_stack, big_stack = players
+        self.game_engine._current_hand_players = players
+        self.game_engine.community_cards = [
+            Card(Suit.CLUBS, Rank.TWO),
+            Card(Suit.DIAMONDS, Rank.THREE),
+            Card(Suit.HEARTS, Rank.FOUR),
+            Card(Suit.SPADES, Rank.EIGHT),
+            Card(Suit.CLUBS, Rank.NINE),
+        ]
+        short_stack.deal_hole_cards([Card(Suit.HEARTS, Rank.ACE), Card(Suit.DIAMONDS, Rank.ACE)])
+        medium_stack.deal_hole_cards([Card(Suit.HEARTS, Rank.KING), Card(Suit.DIAMONDS, Rank.KING)])
+        big_stack.deal_hole_cards([Card(Suit.HEARTS, Rank.QUEEN), Card(Suit.DIAMONDS, Rank.JACK)])
+        for player in players:
+            player.bankroll = 0
+            player.all_in = True
+
+        self.game_engine.pot = Pot()
+        self.game_engine.pot.add_bet(short_stack, 50)
+        self.game_engine.pot.add_bet(medium_stack, 100)
+        self.game_engine.pot.add_bet(big_stack, 100)
+
+        self.game_engine._distribute_pot([short_stack])
+
+        assert short_stack.bankroll == 150
+        assert medium_stack.bankroll == 100
+        assert big_stack.bankroll == 0
+
+    def test_hand_history_records_winning_hand_details(self):
+        """Completed showdown hands should include winner rank and best five cards."""
+        self.game_engine._setup_cash_game_table(1, 10, 20)
+        players = self.game_engine.table.get_players_in_order()
+        opponent = next(p for p in players if p != self.human_player)
+        self.game_engine._current_hand_players = players
+        self.game_engine.community_cards = [
+            Card(Suit.CLUBS, Rank.TWO),
+            Card(Suit.DIAMONDS, Rank.THREE),
+            Card(Suit.HEARTS, Rank.FOUR),
+            Card(Suit.SPADES, Rank.EIGHT),
+            Card(Suit.CLUBS, Rank.NINE),
+        ]
+        self.human_player.deal_hole_cards([Card(Suit.HEARTS, Rank.ACE), Card(Suit.DIAMONDS, Rank.ACE)])
+        opponent.deal_hole_cards([Card(Suit.HEARTS, Rank.KING), Card(Suit.DIAMONDS, Rank.KING)])
+        self.game_engine.pot = Pot()
+        self.game_engine.pot.add_bet(self.human_player, 50)
+        self.game_engine.pot.add_bet(opponent, 50)
+        self.game_engine.session_tracker.start_session(
+            game_type="cash",
+            limit_type="no_limit",
+            bankroll_start=1000,
+            small_blind=10,
+            big_blind=20,
+        )
+        self.game_engine.session_tracker.start_hand(hero_hole_cards=["Ah", "Ad"])
+
+        self.game_engine._complete_hand()
+
+        last_hand = self.game_engine.session_tracker.hand_history[-1]
+        assert last_hand["winners"] == [self.human_player.name]
+        assert last_hand["won_by_fold"] is False
+        assert last_hand["winning_hands"][0]["player"] == self.human_player.name
+        assert last_hand["winning_hands"][0]["rank"] == "Pair"
+        assert len(last_hand["winning_hands"][0]["cards"]) == 5
+
     def test_fixed_limit_enforces_bet_sizing_and_raise_cap(self):
         """Test fixed-limit betting uses fixed increments and caps raises."""
         self.game_engine.limit_type = "limit"

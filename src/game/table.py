@@ -137,6 +137,43 @@ class Table:
         """
         return [player for player in self.get_players_in_order() 
                 if not player.folded and player.bankroll > 0]
+
+    def get_players_with_chips(self) -> List[Player]:
+        """
+        Get all seated players who can be dealt into the next hand.
+
+        Returns:
+            List of players with a positive chip stack
+        """
+        return [player for player in self.get_players_in_order() if player.bankroll > 0]
+
+    def remove_busted_players(self, *, keep: Optional[List[Player]] = None) -> List[Player]:
+        """
+        Remove players with no chips from the table.
+
+        Args:
+            keep: Optional players to leave seated even when busted
+
+        Returns:
+            List of removed players
+        """
+        keep_set = set(keep or [])
+        removed: List[Player] = []
+
+        for player in list(self.get_players_in_order()):
+            if player in keep_set or player.bankroll > 0:
+                continue
+            self.remove_player(player)
+            removed.append(player)
+
+        if removed:
+            self._update_positions()
+
+        return removed
+
+    def can_deal_hand(self) -> bool:
+        """Check if at least two seated players have chips."""
+        return len(self.get_players_with_chips()) >= 2
     
     def get_players_in_hand(self) -> List[Player]:
         """

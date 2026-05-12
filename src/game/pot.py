@@ -73,6 +73,10 @@ class Pot:
             player: The betting player
             amount: The bet amount
         """
+        amount = int(amount)
+        if amount <= 0:
+            return
+
         self.total += amount
         self.main_pot += amount
         self.player_contributions[player] += amount
