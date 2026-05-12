@@ -1,114 +1,96 @@
 #!/usr/bin/env python3
 """
 Test runner for PyHoldem Pro.
-Provides various test execution options and reporting.
+Provides test execution options and simple environment checks.
 """
 
-import sys
-import subprocess
 import argparse
+import subprocess
+import sys
 from pathlib import Path
+from typing import List
+
+
+def _pytest_cmd(*args: str) -> List[str]:
+    return [sys.executable, "-m", "pytest", *args]
 
 
 def run_all_tests(verbose=False, coverage=False):
-    cmd = ["python3", "-m", "pytest"]
-    
+    cmd = _pytest_cmd()
+
     if verbose:
         cmd.append("-v")
-    
+
     if coverage:
         cmd.extend(["--cov=src", "--cov-report=html", "--cov-report=term"])
-    
+
     cmd.append("tests/")
-    
     return subprocess.run(cmd)
 
 
 def run_unit_tests(verbose=False):
-    """Run only unit tests."""
-    cmd = ["python3", "-m", "pytest", "-m", "unit"]
-    
+    cmd = _pytest_cmd("-m", "unit")
     if verbose:
         cmd.append("-v")
-    
     cmd.append("tests/")
-    
     return subprocess.run(cmd)
 
 
 def run_integration_tests(verbose=False):
-    """Run only integration tests."""
-    cmd = ["python3", "-m", "pytest", "-m", "integration"]
-    
+    cmd = _pytest_cmd("-m", "integration")
     if verbose:
         cmd.append("-v")
-    
     cmd.append("tests/")
-    
     return subprocess.run(cmd)
 
 
 def run_specific_test_file(test_file, verbose=False):
-    """Run tests from a specific file."""
-    cmd = ["python3", "-m", "pytest"]
-    
+    cmd = _pytest_cmd()
     if verbose:
         cmd.append("-v")
-    
     cmd.append(f"tests/{test_file}")
-    
     return subprocess.run(cmd)
 
 
 def run_tests_by_category(category, verbose=False):
-    """Run tests by category (marker)."""
-    cmd = ["python3", "-m", "pytest", "-m", category]
-    
+    cmd = _pytest_cmd("-m", category)
     if verbose:
         cmd.append("-v")
-    
     cmd.append("tests/")
-    
     return subprocess.run(cmd)
 
 
 def check_test_environment():
-    """Check if test environment is properly set up."""
     print("Checking test environment...")
-    
-    # Check if pytest is installed
+
     try:
         import pytest
-        print(f"✓ pytest installed (version {pytest.__version__})")
+
+        print(f"[ok] pytest installed (version {pytest.__version__})")
     except ImportError:
-        print("✗ pytest not installed")
+        print("[error] pytest not installed")
         return False
-    
-    # Check if required directories exist
+
     test_dir = Path("tests")
     if test_dir.exists():
-        print("✓ tests directory found")
+        print("[ok] tests directory found")
     else:
-        print("✗ tests directory not found")
+        print("[error] tests directory not found")
         return False
-    
-    # Check if src directory exists
+
     src_dir = Path("src")
     if src_dir.exists():
-        print("✓ src directory found")
+        print("[ok] src directory found")
     else:
-        print("✗ src directory not found")
+        print("[error] src directory not found")
         return False
-    
-    # Count test files
+
     test_files = list(test_dir.glob("test_*.py"))
-    print(f"✓ Found {len(test_files)} test files")
-    
+    print(f"[ok] Found {len(test_files)} test files")
     return True
 
 
 def main():
-    """Main test runner."""
     parser = argparse.ArgumentParser(description="PyHoldem Pro Test Runner")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("-c", "--coverage", action="store_true", help="Run with coverage")
@@ -117,19 +99,16 @@ def main():
     parser.add_argument("-f", "--file", help="Run specific test file")
     parser.add_argument("-m", "--marker", help="Run tests with specific marker")
     parser.add_argument("--check", action="store_true", help="Check test environment")
-    
+
     args = parser.parse_args()
-    
-    # Check environment first if requested
+
     if args.check:
         if check_test_environment():
-            print("\n✓ Test environment is ready!")
-        else:
-            print("\n✗ Test environment has issues!")
-            return 1
-        return 0
-    
-    # Run specific test categories
+            print("\n[ok] Test environment is ready!")
+            return 0
+        print("\n[error] Test environment has issues!")
+        return 1
+
     if args.unit:
         print("Running unit tests...")
         result = run_unit_tests(args.verbose)
@@ -145,7 +124,7 @@ def main():
     else:
         print("Running all tests...")
         result = run_all_tests(args.verbose, args.coverage)
-    
+
     return result.returncode
 
 

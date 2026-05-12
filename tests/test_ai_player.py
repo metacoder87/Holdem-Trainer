@@ -3,6 +3,7 @@ Test suite for AI Player classes.
 Tests AI decision making, different playing styles, and behavior patterns.
 """
 import pytest
+import random
 from unittest.mock import Mock, patch
 from game.ai_player import AIPlayer, AIStyle, CautiousAI, WildAI, BalancedAI, RandomAI
 from game.player import PlayerAction
@@ -164,6 +165,8 @@ class TestWildAI:
         
     def test_wild_ai_aggressive_betting(self):
         """Test wild AI tends to bet aggressively."""
+        # Seed for reproducibility to avoid flaky tests
+        random.seed(42)
         ai = WildAI("Wild_Bot", 1000)
         
         # Even with mediocre hand
