@@ -3,10 +3,12 @@ Statistics Calculator module for PyHoldem Pro.
 Implements poker statistics calculations including pot odds, hand odds, and equity.
 """
 import math
+import random as _random
 from typing import List, Tuple, Dict, Optional
 from collections import Counter
 from itertools import combinations
-from game.card import Card, Rank
+from functools import lru_cache
+from game.card import Card, Rank, Suit
 from game.hand import Hand, HandRank
 
 
@@ -69,21 +71,36 @@ class PotOddsCalculator:
         return (int(round(ratio)), 1)
     
     @staticmethod
-    def calculate_implied_odds(pot_size: float, bet_to_call: float, 
+    def calculate_implied_odds(pot_size: float, bet_to_call: float,
                               expected_future_bets: float) -> float:
         """
-        Calculate implied odds considering future betting.
-        
-        Args:
-            pot_size: Current pot size
-            bet_to_call: Amount needed to call
-            expected_future_bets: Expected additional winnings if hand hits
-            
-        Returns:
-            Implied odds as decimal
+        Calculate the *required equity* to call profitably when we expect to
+        extract additional bets on later streets when we hit our draw.
+
+        Definition (pinned):
+            required_equity = bet / (pot + bet + future_winnings)
+
+        - `pot_size`: chips already in the pot *before* the current bet.
+        - `bet_to_call`: amount the player must put in to continue.
+        - `expected_future_bets`: chips we expect to win on future streets *in
+          addition to the current pot* on the branch where the draw hits.
+          (Does NOT include the current bet.)
+
+        Worked example (textbook):
+            pot 100, call 25, future_winnings 50
+            -> required equity = 25 / (100 + 25 + 50) = 25 / 175
+            -> 0.1429 (~14.3%)
+
+        Compare to raw pot odds without implied:
+            25 / (100 + 25) = 0.20 (20%)
+        Implied odds lower the required equity threshold to call.
         """
-        effective_pot = pot_size + expected_future_bets
-        return PotOddsCalculator.calculate_pot_odds(effective_pot, bet_to_call)
+        if bet_to_call <= 0:
+            return 0.0
+        denominator = float(pot_size) + float(bet_to_call) + float(expected_future_bets)
+        if denominator <= 0:
+            return 0.0
+        return float(bet_to_call) / denominator
     
     @staticmethod
     def calculate_reverse_implied_odds(pot_size: float, bet_to_call: float,
@@ -387,103 +404,131 @@ class HandOddsCalculator:
         return min(strength, 0.8)  # Cap non-pairs below pair strength
 
 
+def _full_deck() -> List[Card]:
+    return [Card(suit, rank) for suit in Suit for rank in Rank]
+
+
 class EquityCalculator:
-    """Calculator for hand equity against opponents."""
-    
+    """Calculator for hand equity against opponents.
+
+    Uses Monte Carlo simulation: deal out the remaining board cards (river
+    only / turn + river / full runout from preflop) repeatedly and tally
+    showdowns. With 1,000 trials the standard error is ~1.5%, which is
+    accurate enough for training feedback without burning CPU.
+    """
+
+    DEFAULT_TRIALS = 1000
+
     @staticmethod
-    def calculate_heads_up_equity(hand1: List[Card], hand2: List[Card],
-                                 board: Optional[List[Card]] = None) -> Tuple[float, float]:
+    def _showdown_winners(
+        hole_groups: List[List[Card]], board: List[Card]
+    ) -> List[int]:
+        """Return indices of the player(s) tied for the best 5-card hand."""
+        best_hand = None
+        best_indices: List[int] = []
+        for idx, hole_cards in enumerate(hole_groups):
+            all_cards = list(hole_cards) + list(board)
+            if len(all_cards) < 5:
+                # Defensive: shouldn't happen post-river
+                continue
+            hand = Hand.best_hand_from_cards(all_cards)
+            if best_hand is None or hand > best_hand:
+                best_hand = hand
+                best_indices = [idx]
+            elif hand == best_hand:
+                best_indices.append(idx)
+        return best_indices
+
+    @classmethod
+    def _simulate(
+        cls,
+        hole_groups: List[List[Card]],
+        board: List[Card],
+        trials: int,
+        rng: Optional[_random.Random] = None,
+    ) -> List[float]:
+        """Monte Carlo simulate equity for each hole_group given a board.
+
+        Wins count for 1.0, ties split (1/N). Returns equities summing to 1.0.
         """
-        Calculate equity between two hands.
-        
+        if not hole_groups:
+            return []
+        rng = rng or _random.Random()
+        deck = _full_deck()
+        # Remove dead cards (the players' hole cards and known board cards).
+        dead = {(c.suit, c.rank) for group in hole_groups for c in group}
+        dead.update((c.suit, c.rank) for c in board)
+        remaining = [c for c in deck if (c.suit, c.rank) not in dead]
+
+        cards_to_come = 5 - len(board)
+        if cards_to_come < 0:
+            cards_to_come = 0
+
+        if cards_to_come == 0:
+            # River already dealt -> deterministic showdown, no need to loop.
+            winners = cls._showdown_winners(hole_groups, board)
+            if not winners:
+                return [1.0 / len(hole_groups)] * len(hole_groups)
+            equities = [0.0] * len(hole_groups)
+            for i in winners:
+                equities[i] = 1.0 / len(winners)
+            return equities
+
+        equities = [0.0] * len(hole_groups)
+        for _ in range(trials):
+            runout = rng.sample(remaining, cards_to_come)
+            winners = cls._showdown_winners(hole_groups, board + runout)
+            if not winners:
+                continue
+            share = 1.0 / len(winners)
+            for i in winners:
+                equities[i] += share
+
+        if trials > 0:
+            equities = [e / trials for e in equities]
+        return equities
+
+    @classmethod
+    def calculate_heads_up_equity(
+        cls,
+        hand1: List[Card],
+        hand2: List[Card],
+        board: Optional[List[Card]] = None,
+        trials: int = DEFAULT_TRIALS,
+        rng: Optional[_random.Random] = None,
+    ) -> Tuple[float, float]:
+        """Calculate heads-up equity via Monte Carlo.
+
         Args:
-            hand1: First player's hole cards
-            hand2: Second player's hole cards
-            board: Community cards (optional)
-            
+            hand1, hand2: each player's two hole cards.
+            board: 0/3/4/5 community cards already on the table.
+            trials: number of simulated runouts. Default 1000 -> ~1.5% SE.
+            rng: optional Random instance for deterministic results.
+
         Returns:
-            Tuple of (hand1_equity, hand2_equity)
+            (equity1, equity2) summing to 1.0.
         """
-        if board is None:
-            board = []
-        
-        # For simplicity, use a basic evaluation
-        # In a real implementation, this would run Monte Carlo simulations
-        
-        strength1 = HandOddsCalculator.calculate_hand_strength(hand1, board)
-        strength2 = HandOddsCalculator.calculate_hand_strength(hand2, board)
-        
-        if len(board) >= 5:
-            # Post-river: definitive result
-            if strength1 > strength2:
-                return (1.0, 0.0)
-            elif strength2 > strength1:
-                return (0.0, 1.0)
-            else:
-                return (0.5, 0.5)
-        else:
-            # Pre-river: estimate based on current strength and potential
-            if len(board) == 0:
-                # Preflop: use strength directly for pocket pairs
-                total = strength1 + strength2
-                if total > 0:
-                    equity1 = strength1 / total
-                    equity2 = strength2 / total
-                else:
-                    equity1 = equity2 = 0.5
-            else:
-                # Post-flop: include potential
-                potential1 = HandOddsCalculator.calculate_hand_potential(hand1, board)
-                potential2 = HandOddsCalculator.calculate_hand_potential(hand2, board)
-                
-                total_strength1 = strength1 + potential1 * 0.5
-                total_strength2 = strength2 + potential2 * 0.5
-                
-                total = total_strength1 + total_strength2
-                if total > 0:
-                    equity1 = total_strength1 / total
-                    equity2 = total_strength2 / total
-                else:
-                    equity1 = equity2 = 0.5
-            
-            return (equity1, equity2)
-    
-    @staticmethod
-    def calculate_multiway_equity(hands: List[List[Card]], 
-                                board: Optional[List[Card]] = None) -> List[float]:
-        """
-        Calculate equity for multiple hands.
-        
-        Args:
-            hands: List of hole card pairs
-            board: Community cards (optional)
-            
-        Returns:
-            List of equity values for each hand
-        """
+        board = list(board or [])
+        if len(hand1) != 2 or len(hand2) != 2:
+            return (0.5, 0.5)
+        equities = cls._simulate([hand1, hand2], board, trials=trials, rng=rng)
+        if not equities:
+            return (0.5, 0.5)
+        return equities[0], equities[1]
+
+    @classmethod
+    def calculate_multiway_equity(
+        cls,
+        hands: List[List[Card]],
+        board: Optional[List[Card]] = None,
+        trials: int = DEFAULT_TRIALS,
+        rng: Optional[_random.Random] = None,
+    ) -> List[float]:
+        """Calculate equity for N players via Monte Carlo."""
         if not hands:
             return []
-        
-        if board is None:
-            board = []
-        
-        # Calculate strength for each hand
-        strengths = []
-        for hand in hands:
-            strength = HandOddsCalculator.calculate_hand_strength(hand, board)
-            potential = HandOddsCalculator.calculate_hand_potential(hand, board)
-            total_strength = strength + potential * 0.3  # Less impact in multiway
-            strengths.append(total_strength)
-        
-        # Normalize to get equity
-        total_strength = sum(strengths)
-        if total_strength > 0:
-            equities = [s / total_strength for s in strengths]
-        else:
-            # Equal equity if all hands are equally weak
-            equities = [1.0 / len(hands)] * len(hands)
-        
-        return equities
+        board = list(board or [])
+        return cls._simulate(hands, board, trials=trials, rng=rng)
     
     @staticmethod
     def calculate_tournament_icm_equity(stacks: List[float], payouts: List[float]) -> List[float]:

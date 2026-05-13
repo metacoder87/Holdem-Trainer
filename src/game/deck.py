@@ -9,12 +9,19 @@ from game.card import Card, Suit, Rank
 
 class Deck:
     """Represents a standard 52-card deck."""
-    
-    def __init__(self):
-        """Initialize a new deck with 52 cards in standard order."""
+
+    def __init__(self, *, rng: Optional[random.Random] = None):
+        """Initialize a new deck with 52 cards in standard order.
+
+        Args:
+            rng: Optional dedicated Random instance for shuffles. Lets callers
+                make hands reproducible without touching the global random
+                state.
+        """
         self.cards = self._create_standard_deck()
         self._original_order = self.cards.copy()
-    
+        self._rng = rng
+
     def _create_standard_deck(self) -> List[Card]:
         """Create a standard 52-card deck."""
         cards = []
@@ -22,27 +29,34 @@ class Deck:
             for rank in Rank:
                 cards.append(Card(suit, rank))
         return cards
-    
+
     @property
     def cards_remaining(self) -> int:
         """Return the number of cards remaining in the deck."""
         return len(self.cards)
-    
+
     @property
     def is_empty(self) -> bool:
         """Check if the deck is empty."""
         return len(self.cards) == 0
-    
+
     def shuffle(self, seed: Optional[int] = None):
         """
         Shuffle the deck.
-        
+
         Args:
-            seed: Optional random seed for reproducible shuffling
+            seed: Optional random seed for reproducible shuffling. Uses the
+                deck's dedicated Random when provided, otherwise the global
+                random module (preserving previous behavior).
         """
         if seed is not None:
-            random.seed(seed)
-        random.shuffle(self.cards)
+            if self._rng is None:
+                self._rng = random.Random()
+            self._rng.seed(seed)
+        if self._rng is not None:
+            self._rng.shuffle(self.cards)
+        else:
+            random.shuffle(self.cards)
     
     def deal_card(self) -> Card:
         """

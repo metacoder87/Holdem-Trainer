@@ -22,6 +22,11 @@ class QuizType(Enum):
 class PokerTrainer:
     """Interactive poker training system."""
     
+    # Per-topic mastery is tracked here. Each entry is a running window of
+    # the most recent N attempts; `get_random_quiz_type` uses this to bias
+    # selection toward under-trained topics.
+    _MASTERY_WINDOW = 20
+
     def __init__(self):
         """Initialize the poker trainer."""
         self.training_enabled = False
@@ -35,13 +40,16 @@ class PokerTrainer:
             'streak': 0,
             'best_streak': 0
         }
-        
+
         self.quiz_types = [
             QuizType.POT_ODDS,
             QuizType.REQUIRED_EQUITY,
             QuizType.IMPLIED_ODDS,
             QuizType.BET_SIZING
         ]
+
+        # Per-topic running window of {1=correct, 0=incorrect} results.
+        self.topic_history: Dict[QuizType, List[int]] = {q: [] for q in self.quiz_types}
         
     def enable_training(self):
         """Enable training mode."""
@@ -123,34 +131,70 @@ class PokerTrainer:
             'difficulty': self.current_difficulty
         }
         
-    def _generate_required_equity_quiz(self, pot_size: float, bet_to_call: float) -> Dict[str, Any]:
-        """Generate a required equity quiz question."""
-        required_equity = PotOddsCalculator.calculate_pot_odds(pot_size, bet_to_call)
-        percentage = required_equity * 100
-        
+    def _generate_required_equity_quiz(
+        self,
+        pot_size: float,
+        bet_to_call: float,
+        fold_equity: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Generate a required-equity quiz with fold-equity adjustment.
+
+        Pure pot-odds is `bet / (pot + bet)`. The "required equity to call"
+        question becomes interesting when there's fold equity in play: against
+        a player who folds X% to a raise/jam, required call equity drops.
+
+        This produces a different correct answer than the paired pot-odds quiz
+        so the two quiz types actually train distinct skills.
+        """
+        if fold_equity is None:
+            # Pick a non-trivial fold-equity figure each time so the answer
+            # diverges from the raw pot-odds answer.
+            fold_equity = random.uniform(0.10, 0.50)
+
+        raw_required = PotOddsCalculator.calculate_pot_odds(pot_size, bet_to_call)
+        # When the opponent folds with probability f, we win the pot directly
+        # in those branches. Effective required equity on the (1-f) non-fold
+        # branch: (raw - f) / (1 - f), clamped to [0, 1].
+        adjusted = (raw_required - fold_equity) / (1.0 - fold_equity)
+        adjusted = max(0.0, min(1.0, adjusted))
+        percentage = adjusted * 100
+
         question = (
-            f"🎯 TRAINING QUIZ - REQUIRED EQUITY\n"
-            f"The pot is ${pot_size:.0f} and you must call ${bet_to_call:.0f}.\n"
-            f"What minimum equity do you need to break even?\n"
-            f"(Answer as a percentage, rounded to nearest whole number)"
+            "🎯 TRAINING QUIZ - REQUIRED EQUITY (with fold equity)\n"
+            f"The pot is ${pot_size:.0f}, the bet to call is ${bet_to_call:.0f}.\n"
+            f"You estimate your opponent folds {fold_equity * 100:.0f}% of the time "
+            "when you shove.\n"
+            "What minimum equity do you need on the called branch to break even?\n"
+            "(Answer as a percentage, rounded to the nearest whole number)"
         )
-        
+
+        raw_pct = raw_required * 100
         explanation = (
-            f"💡 EXPLANATION:\n"
-            f"Required Equity = Bet to Call ÷ (Pot Size + Bet to Call)\n"
-            f"This is the same calculation as pot odds!\n"
-            f"= ${bet_to_call:.0f} ÷ ${pot_size + bet_to_call:.0f}\n"
-            f"= {required_equity:.3f} = {percentage:.1f}%\n\n"
-            f"If your hand has {percentage:.1f}% equity or more, calling is profitable."
+            "💡 EXPLANATION:\n"
+            f"Without fold equity, you'd need {raw_pct:.1f}% to call.\n"
+            f"Because the opponent folds {fold_equity * 100:.0f}% of the time, "
+            "you collect the pot directly in those branches.\n"
+            "On the remaining (called) branch, you only need to win often "
+            f"enough that the combined EV is breakeven:\n"
+            f"= (raw_required - fold_equity) / (1 - fold_equity)\n"
+            f"= ({raw_pct:.1f}% - {fold_equity * 100:.0f}%) / "
+            f"(100% - {fold_equity * 100:.0f}%)\n"
+            f"= {percentage:.1f}%"
         )
-        
+
         return {
             'type': QuizType.REQUIRED_EQUITY.value,
             'question': question,
-            'correct_answer': required_equity,
+            'correct_answer': adjusted,
             'correct_percentage': round(percentage),
             'explanation': explanation,
-            'difficulty': self.current_difficulty
+            'difficulty': self.current_difficulty,
+            'context': {
+                'pot_size': pot_size,
+                'bet_to_call': bet_to_call,
+                'fold_equity': fold_equity,
+                'raw_pot_odds': raw_required,
+            },
         }
         
     def _generate_implied_odds_quiz(self, pot_size: float, bet_to_call: float, 
@@ -266,9 +310,19 @@ class PokerTrainer:
                     'correct_answer': correct_answer
                 }
                 
-        # Check if answer is within tolerance.
-        # - For fractional answers (0-1), also accept % input (e.g. 25 for 0.25).
-        # - For numeric answers (>1), interpret tolerance <= 1.0 as relative (e.g. 0.2 = ±20%).
+        # Tolerance semantics (pinned, see tests/test_training_mode.py):
+        #
+        # - Fractional correct answers (0 < a <= 1) such as pot-odds (0.25):
+        #     * Accept fractional input if |a - user| <= tolerance.
+        #     * Also accept percent input if |a*100 - user| <= tolerance*100,
+        #       so a tolerance of 0.05 means "within 5 percentage points" in
+        #       either input form. The two checks are equivalent and the
+        #       union just lets the user type either 0.25 or 25 freely.
+        #
+        # - Numeric correct answers (e.g. bet sizing in chips, > 1):
+        #     * tolerance <= 1.0 is treated as a RELATIVE fraction
+        #       (tolerance=0.2 -> within 20% of the target).
+        #     * tolerance > 1.0 is treated as an ABSOLUTE chip amount.
         difference = abs(correct_answer - user_answer)
 
         is_fractional = 0 < correct_answer <= 1.0
@@ -280,9 +334,12 @@ class PokerTrainer:
             percentage_difference = abs((correct_answer * 100) - user_answer)
             is_correct = is_correct or (percentage_difference <= percentage_tolerance)
         else:
-            allowed_diff = tolerance
             if tolerance <= 1.0:
+                # Relative tolerance: a fraction of |correct_answer|.
                 allowed_diff = abs(correct_answer) * tolerance
+            else:
+                # Absolute tolerance: in chips/units.
+                allowed_diff = tolerance
             is_correct = difference <= allowed_diff
             
         # Update performance stats
@@ -358,29 +415,38 @@ class PokerTrainer:
         self.performance_stats['total_quizzes'] += 1
         self._adjust_difficulty(correct)
         
+    def topic_mastery(self, quiz_type: QuizType) -> float:
+        """Return rolling accuracy in [0, 1] for a topic.
+
+        Returns 0.5 (neutral) when there's no data yet, so under-trained
+        topics aren't aggressively over-weighted before the user has seen them.
+        """
+        window = self.topic_history.get(quiz_type) or []
+        if not window:
+            return 0.5
+        return sum(window) / len(window)
+
+    def record_topic_result(self, quiz_type: QuizType, correct: bool) -> None:
+        """Append a result to the topic's rolling window."""
+        window = self.topic_history.setdefault(quiz_type, [])
+        window.append(1 if correct else 0)
+        if len(window) > self._MASTERY_WINDOW:
+            del window[: len(window) - self._MASTERY_WINDOW]
+
     def get_random_quiz_type(self) -> QuizType:
-        """Get a random quiz type based on current difficulty."""
-        # Weight quiz types by difficulty
-        if self.current_difficulty < 1.0:
-            # Easier quizzes for beginners
-            weights = {
-                QuizType.POT_ODDS: 3,
-                QuizType.REQUIRED_EQUITY: 3,
-                QuizType.IMPLIED_ODDS: 1,
-                QuizType.BET_SIZING: 1
-            }
-        else:
-            # More advanced quizzes for experienced players
-            weights = {
-                QuizType.POT_ODDS: 2,
-                QuizType.REQUIRED_EQUITY: 2,
-                QuizType.IMPLIED_ODDS: 2,
-                QuizType.BET_SIZING: 2
-            }
-            
+        """Pick a quiz topic biased toward under-mastered ones.
+
+        Weight = max(0.2, 1 - mastery). A topic at 100% accuracy still gets
+        20% relative weight so the user occasionally reviews mastered material;
+        a topic at 0% accuracy gets ~5x the weight of a mastered one.
+        """
+        weights: Dict[QuizType, float] = {}
+        for quiz_type in self.quiz_types:
+            mastery = self.topic_mastery(quiz_type)
+            weights[quiz_type] = max(0.2, 1.0 - mastery)
+
         quiz_types = list(weights.keys())
         quiz_weights = list(weights.values())
-        
         return random.choices(quiz_types, weights=quiz_weights)[0]
         
     def get_performance_summary(self) -> Dict[str, Any]:

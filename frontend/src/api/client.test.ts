@@ -1,52 +1,67 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createGameSession, getHandDetail, getWebSocketUrl } from "./client";
+import {
+  createDrill,
+  getAnalyticsLeaks,
+  getHandReplay,
+  getSummary
+} from "./client";
 
-describe("api client", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
+const fetchMock = vi.fn();
+vi.stubGlobal("fetch", fetchMock);
+
+afterEach(() => {
+  fetchMock.mockReset();
+});
+
+function mockJson<T>(payload: T) {
+  fetchMock.mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    json: async () => payload,
+    text: async () => JSON.stringify(payload)
+  } as Response);
+}
+
+describe("API client", () => {
+  it("encodes player query in summary", async () => {
+    mockJson({ player: { name: "Jon" } });
+    await getSummary("Jon Doe");
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("/api/summary?player=Jon%20Doe");
   });
 
-  it("builds websocket URLs from the configured API origin", () => {
-    expect(getWebSocketUrl("/ws/session-1")).toBe("ws://127.0.0.1:8000/ws/session-1");
+  it("encodes player path segment in replay", async () => {
+    mockJson({ hand_number: 1, hero_hole_cards: [], winners: [], pot_total: 0, meta: {}, streets: [], summary: {} });
+    await getHandReplay("Jon Doe", 7);
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("/api/hands/Jon%20Doe/7/replay");
   });
 
-  it("serializes game session creation payloads", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        id: "session-1",
-        player_name: "Hero",
-        game_type: "cash",
-        limit_type: "no_limit",
-        status: "ready",
-        config: {}
-      })
+  it("posts JSON body for createDrill", async () => {
+    mockJson({
+      drill_id: "abc",
+      kind: "pot_odds",
+      scenario: "...",
+      options: [],
+      correct_action: "call",
+      context: {},
+      difficulty: 2,
+      focus_area: "poor_pot_odds"
     });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await createGameSession({ player_name: "Hero", game_type: "cash", opponents: 1 });
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:8000/api/games/sessions",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ player_name: "Hero", game_type: "cash", opponents: 1 })
-      })
-    );
+    await createDrill({ player_name: "Jon", focus_area: "poor_pot_odds", difficulty: 3 });
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      player_name: "Jon",
+      focus_area: "poor_pot_odds",
+      difficulty: 3
+    });
   });
 
-  it("requests replay detail by player and hand number", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ hand_number: 4 })
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await getHandDetail("Hero Name", 4);
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:8000/api/hands/Hero%20Name/4",
-      expect.any(Object)
-    );
+  it("omits player query when not provided", async () => {
+    mockJson({ player: null, leaks: [] });
+    await getAnalyticsLeaks();
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url.endsWith("/api/analytics/leaks")).toBe(true);
   });
 });

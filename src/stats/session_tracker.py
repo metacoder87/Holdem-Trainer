@@ -47,17 +47,23 @@ class SessionMetrics:
 
     biggest_pot: int = 0
 
+    # Highest finite AF we expose downstream. Without a cap, "raises but
+    # zero postflop calls" used to serialize as float('inf') which is not
+    # valid JSON in strict parsers.
+    AF_INFINITE_SENTINEL = 99.9
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize metrics to a JSON-friendly dictionary."""
         hands = self.hands_played or 0
 
         vpip = self.vpip_hands / hands if hands > 0 else 0.0
         pfr = self.pfr_hands / hands if hands > 0 else 0.0
-        aggression_factor = (
-            (self.postflop_raises / self.postflop_calls)
-            if self.postflop_calls > 0
-            else (float("inf") if self.postflop_raises > 0 else 0.0)
-        )
+        if self.postflop_calls > 0:
+            aggression_factor = self.postflop_raises / self.postflop_calls
+        elif self.postflop_raises > 0:
+            aggression_factor = self.AF_INFINITE_SENTINEL
+        else:
+            aggression_factor = 0.0
 
         winrate = self.hands_won / hands if hands > 0 else 0.0
 
@@ -217,9 +223,26 @@ class SessionTracker:
         pot_before: int,
         betting_round: str,
         did_raise: bool = False,
+        is_aggressive_intent: Optional[bool] = None,
     ) -> None:
+        """Append an action to the current hand and update aggregates.
+
+        `did_raise` reflects whether the action mechanically reopened betting
+        (the engine sets this to False for non-full all-in raises so the
+        action doesn't reopen the round). That's the right behavior for the
+        betting state machine, but the *player's intent* was still aggressive
+        - they wanted to put more chips in. `is_aggressive_intent` captures
+        that intent and is what we count toward AF/PFR so a short-stack jam
+        isn't accidentally booked as a call.
+
+        Defaults to `did_raise` for backward compatibility with callers that
+        don't supply it.
+        """
         if self._metrics is None or not self.hand_history:
             return
+
+        if is_aggressive_intent is None:
+            is_aggressive_intent = bool(did_raise)
 
         pot_before_int = int(pot_before)
         amount_int = int(amount)
@@ -232,6 +255,7 @@ class SessionTracker:
                 "pot_after": pot_before_int + amount_int,
                 "betting_round": betting_round,
                 "did_raise": bool(did_raise),
+                "is_aggressive_intent": bool(is_aggressive_intent),
             }
         )
 
@@ -244,17 +268,19 @@ class SessionTracker:
                 if not self._hand_vpip:
                     self._metrics.vpip_hands += 1
                     self._hand_vpip = True
-            if did_raise and action in {"raise", "all_in"}:
+            # PFR uses intent so short-stack jams that don't reopen betting
+            # still count as preflop raises.
+            if is_aggressive_intent and action in {"raise", "all_in"}:
                 if not self._hand_pfr:
                     self._metrics.pfr_hands += 1
                     self._hand_pfr = True
             return
 
-        # Postflop aggression: (raises)/(calls). (We count "bet" as a raise in the engine.)
+        # Postflop aggression: (aggressive_intent_actions) / (calls).
         if action == "call" and amount > 0:
             self._metrics.postflop_calls += 1
         elif action in {"raise", "all_in"} and amount > 0:
-            if did_raise:
+            if is_aggressive_intent:
                 self._metrics.postflop_raises += 1
 
     def record_decision(self, decision: Dict[str, Any]) -> None:

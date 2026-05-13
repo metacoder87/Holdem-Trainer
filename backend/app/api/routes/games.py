@@ -44,7 +44,7 @@ def game_modes():
 @router.post("/games/sessions")
 def game_sessions_create(payload: SessionCreate) -> dict:
     try:
-        session = create_session(payload.dict(exclude_none=True))
+        session = create_session(payload.model_dump(exclude_none=True))
         return session
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

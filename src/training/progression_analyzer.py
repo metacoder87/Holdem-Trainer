@@ -113,45 +113,58 @@ class ProgressionAnalyzer:
     def identify_weaknesses(self, metrics: Dict[str, Any]) -> List[WeaknessType]:
         """
         Identify specific weaknesses based on metrics.
-        
+
         Args:
             metrics: Dictionary of player statistics
-            
+
         Returns:
-            List of identified weakness types
+            De-duplicated list of identified weakness types, in detection order.
         """
-        weaknesses = []
-        
+        # `seen` preserves order while preventing the same weakness from being
+        # reported twice (e.g. both low PFR and low AF used to emit TOO_PASSIVE).
+        seen: List[WeaknessType] = []
+
+        def add(weakness: WeaknessType) -> None:
+            if weakness not in seen:
+                seen.append(weakness)
+
         vpip = metrics.get('vpip', 0)
         pfr = metrics.get('pfr', 0)
         agg_factor = metrics.get('aggression_factor', 0)
         fold_to_3bet = metrics.get('fold_to_3bet', 0)
-        
+
         # Check VPIP
         if vpip > self.optimal_ranges['vpip'][1] + 0.10:
-            weaknesses.append(WeaknessType.TOO_LOOSE)
+            add(WeaknessType.TOO_LOOSE)
         elif vpip < self.optimal_ranges['vpip'][0] - 0.05:
-            weaknesses.append(WeaknessType.TOO_TIGHT)
-            
+            add(WeaknessType.TOO_TIGHT)
+
         # Check PFR
         if pfr < self.optimal_ranges['pfr'][0] - 0.05:
-            weaknesses.append(WeaknessType.TOO_PASSIVE)
-            
+            add(WeaknessType.TOO_PASSIVE)
+
         # Check aggression
         if agg_factor < 1.5:
-            weaknesses.append(WeaknessType.TOO_PASSIVE)
+            add(WeaknessType.TOO_PASSIVE)
         elif agg_factor > 4.0:
-            weaknesses.append(WeaknessType.TOO_AGGRESSIVE)
-            
+            add(WeaknessType.TOO_AGGRESSIVE)
+
         # Check 3-bet defense
         if fold_to_3bet > 0.75:
-            weaknesses.append(WeaknessType.WEAK_3BET_DEFENSE)
-            
-        # Check for pot odds understanding (if available)
-        if 'pot_odds_accuracy' in metrics and metrics['pot_odds_accuracy'] < 0.60:
-            weaknesses.append(WeaknessType.POOR_POT_ODDS)
-            
-        return weaknesses
+            add(WeaknessType.WEAK_3BET_DEFENSE)
+
+        # Check for pot odds understanding (require a meaningful sample so a
+        # brand-new player isn't flagged on default zeros).
+        pot_odds_accuracy = metrics.get('pot_odds_accuracy')
+        pot_odds_samples = int(metrics.get('pot_odds_samples', 0) or 0)
+        if (
+            pot_odds_accuracy is not None
+            and pot_odds_samples >= 10
+            and pot_odds_accuracy < 0.60
+        ):
+            add(WeaknessType.POOR_POT_ODDS)
+
+        return seen
         
     def suggest_study_topics(self, weaknesses: List[WeaknessType]) -> List[str]:
         """

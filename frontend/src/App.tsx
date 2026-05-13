@@ -46,22 +46,32 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    Promise.allSettled([getHealth(), getSummary(activePlayer || undefined)])
-      .then(([healthResult, summaryResult]) => {
+    getHealth()
+      .then(() => {
+        if (active) setApiStatus("online");
+      })
+      .catch(() => {
+        if (active) setApiStatus("offline");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [activePlayer]);
+
+  useEffect(() => {
+    let active = true;
+
+    getSummary(activePlayer || undefined)
+      .then((value) => {
         if (!active) return;
-
-        if (summaryResult.status === "fulfilled") {
-          setSummary(summaryResult.value);
-          if (!activePlayer && summaryResult.value.player?.name) {
-            setActivePlayer(summaryResult.value.player.name);
-          }
+        setSummary(value);
+        if (!activePlayer && value.player?.name) {
+          setActivePlayer(value.player.name);
         }
-
-        setApiStatus(healthResult.status === "fulfilled" ? "online" : "offline");
       })
       .catch(() => {
         if (!active) return;
-        setApiStatus("offline");
       });
 
     return () => {

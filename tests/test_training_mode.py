@@ -69,13 +69,30 @@ class TestPokerTrainer:
         assert quiz['correct_answer'] == 0.2  # 50/(200+50)
         
     def test_generate_equity_quiz(self):
-        """Test generating equity requirement quiz."""
+        """Test generating equity requirement quiz.
+
+        Required-equity quizzes now include a fold-equity adjustment, which
+        intentionally produces a different answer than the paired pot-odds
+        quiz. When fold_equity=0 the formula degenerates to raw pot odds, so
+        we test both paths.
+        """
         trainer = PokerTrainer()
-        
+        raw_pot_odds = 30 / (150 + 30)
+
+        # Default: fold_equity is randomly sampled in [0.10, 0.50] -> adjusted
+        # answer should differ from raw pot odds.
         quiz = trainer.generate_quiz(QuizType.REQUIRED_EQUITY, pot_size=150, bet_to_call=30)
-        
         assert quiz is not None
-        assert quiz['correct_answer'] == 30 / (150 + 30)  # Required equity
+        assert quiz['correct_answer'] != raw_pot_odds, (
+            "Required-equity quiz should differ from pot-odds when fold_equity > 0"
+        )
+        assert 0.0 <= quiz['correct_answer'] <= 1.0
+
+        # Degenerate case: fold_equity=0 -> same as pot odds.
+        quiz_no_fe = trainer.generate_quiz(
+            QuizType.REQUIRED_EQUITY, pot_size=150, bet_to_call=30, fold_equity=0.0
+        )
+        assert quiz_no_fe['correct_answer'] == raw_pot_odds
         
     def test_evaluate_user_answer(self):
         """Test evaluating user quiz answers."""

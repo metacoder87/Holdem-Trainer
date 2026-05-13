@@ -4,7 +4,17 @@ from app.core.paths import ensure_src_path
 
 ensure_src_path()
 
-from app.api.routes import health, summary, players, training, bankroll, games, hands, ws, analytics
+from app.api.routes import (
+    analytics,
+    bankroll,
+    games,
+    hands,
+    health,
+    players,
+    summary,
+    training,
+    ws,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
