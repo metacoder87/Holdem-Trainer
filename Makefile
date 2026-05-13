@@ -1,10 +1,13 @@
 # Makefile for PyHoldem Pro
-.PHONY: help install dev-install test test-verbose test-coverage clean lint format run setup
+.PHONY: help up up-detached down logs install dev-install test test-verbose test-coverage clean lint format run setup
 
 # Default target
 help:
 	@echo "PyHoldem Pro Development Commands:"
 	@echo "  help         Show this help message"
+	@echo "  up           Build and start the full stack via Docker (single command)"
+	@echo "  down         Stop and remove the Docker stack"
+	@echo "  logs         Tail Docker container logs"
 	@echo "  setup        Set up development environment"
 	@echo "  install      Install package dependencies"
 	@echo "  dev-install  Install package in development mode"
@@ -16,7 +19,20 @@ help:
 	@echo "  lint         Run linting checks"
 	@echo "  format       Format code with black"
 	@echo "  clean        Clean up generated files"
-	@echo "  run          Run the game"
+	@echo "  run          Run the game (CLI)"
+
+# Docker one-command lifecycle
+up:
+	docker compose up --build
+
+up-detached:
+	docker compose up --build -d
+
+down:
+	docker compose down
+
+logs:
+	docker compose logs -f
 
 # Setup development environment
 setup:
@@ -174,14 +190,6 @@ restore-data:
 	@if [ -z "$(FILE)" ]; then echo "Please specify FILE=<backup_file>"; exit 1; fi
 	cp $(FILE) data/players.json
 
-# Development server (if web interface is added)
-dev-server:
-	@echo "Development server not implemented yet"
-
-# Documentation generation (if added)
-docs:
-	@echo "Documentation generation not implemented yet"
-
 # Run security checks
 security:
 	@echo "Running security checks..."
@@ -191,22 +199,6 @@ security:
 # Check for outdated packages
 check-updates:
 	pip list --outdated
-
-# Update all packages
-update-packages:
-	pip install --upgrade -r requirements.txt
-
-# Profile the application
-profile:
-	@echo "Profiling not implemented yet"
-
-# Memory usage analysis
-memory-profile:
-	@echo "Memory profiling not implemented yet"
-
-# Generate test coverage badge
-coverage-badge:
-	@echo "Coverage badge generation not implemented yet"
 
 # Continuous integration simulation
 ci:

@@ -164,15 +164,17 @@ class TestWildAI:
         
     def test_wild_ai_aggressive_betting(self):
         """Test wild AI tends to bet aggressively."""
+        import random as _random
+
         ai = WildAI("Wild_Bot", 1000)
-        
+
         # Even with mediocre hand
         cards = [
             Card(Suit.HEARTS, Rank.KING),
             Card(Suit.SPADES, Rank.NINE)
         ]
         ai.deal_hole_cards(cards)
-        
+
         game_state = {
             'pot_size': 50,
             'current_bet': 25,
@@ -181,16 +183,18 @@ class TestWildAI:
             'community_cards': [],
             'betting_round': 'preflop'
         }
-        
-        # Run multiple times to test for aggressive tendency
+
+        # Seed and increase sample size so this isn't RNG-flaky.
+        _random.seed(0xC0FFEE)
         aggressive_count = 0
-        for _ in range(10):
+        for _ in range(50):
             decision, amount = ai.make_decision(game_state)
             if decision == PlayerAction.RAISE:
                 aggressive_count += 1
-                
-        # Should show aggressive tendency (not 100% but often)
-        assert aggressive_count >= 2  # At least some aggression
+
+        # With 50 samples of a player whose raise rate is well above 0,
+        # expect at least 5 raises.
+        assert aggressive_count >= 5
         
     def test_wild_ai_bluffing(self):
         """Test wild AI bluffs with weak hands."""

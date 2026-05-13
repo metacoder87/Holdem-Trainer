@@ -2,6 +2,7 @@ import { Container, Graphics, Stage, Text, useTick } from "@pixi/react";
 import { BlurFilter, TextStyle } from "pixi.js";
 import { useCallback, useMemo, useRef } from "react";
 import type { Container as PixiContainer, Graphics as PixiGraphics } from "pixi.js";
+import type { LiveGameState } from "../api/client";
 
 const TABLE_SIZE = 360;
 const CENTER = TABLE_SIZE / 2;
@@ -9,34 +10,81 @@ const OUTER_RADIUS = 150;
 const INNER_RADIUS = 110;
 const CARD_WIDTH = 34;
 const CARD_HEIGHT = 48;
-const DEAL_DURATION = 32;
-const DEAL_DELAY = 8;
+const SUIT_COLORS: Record<string, number> = {
+  h: 0xff5c6c,
+  d: 0xff5c6c,
+  s: 0xe7f0ff,
+  c: 0xe7f0ff
+};
 
-const seats = [
-  { label: "Coach Bot", angle: -90 },
-  { label: "Aggro AI", angle: -30 },
-  { label: "Balanced AI", angle: 30 },
-  { label: "Hero", angle: 90 },
-  { label: "Tight AI", angle: 150 },
-  { label: "Wild AI", angle: -150 }
-];
+const FALLBACK_BOARD_SLOTS = 5;
 
-const cardTargets = [
-  { id: "c1", x: -52, y: -42 },
-  { id: "c2", x: -26, y: -42 },
-  { id: "c3", x: 0, y: -42 },
-  { id: "c4", x: 26, y: -42 },
-  { id: "c5", x: 52, y: -42 },
-  { id: "h1", x: -22, y: 62 },
-  { id: "h2", x: 22, y: 62 }
-];
+export type NeonTableProps = {
+  liveState?: LiveGameState | null;
+  heroName?: string | null;
+};
 
-function TableScene() {
+type SeatLayout = { label: string; angle: number };
+
+function buildSeatLayout(state: LiveGameState | null | undefined, heroName: string | null | undefined): SeatLayout[] {
+  if (!state || !state.players || state.players.length === 0) {
+    return [
+      { label: "Coach Bot", angle: -90 },
+      { label: "Aggro AI", angle: -30 },
+      { label: "Balanced AI", angle: 30 },
+      { label: "Hero", angle: 90 },
+      { label: "Tight AI", angle: 150 },
+      { label: "Wild AI", angle: -150 }
+    ];
+  }
+
+  const heroIndex = state.players.findIndex(
+    (player) => player.name === (heroName ?? state.hero_name)
+  );
+
+  const ordered = heroIndex >= 0
+    ? [...state.players.slice(heroIndex), ...state.players.slice(0, heroIndex)]
+    : state.players;
+
+  const count = ordered.length;
+  return ordered.map((player, index) => {
+    // Hero anchored to seat at angle 90 (bottom), others spread evenly.
+    const angle = 90 + (index / count) * 360;
+    const normalized = ((angle + 180) % 360) - 180;
+    return {
+      label: player.folded
+        ? `${player.name} (folded)`
+        : player.all_in
+        ? `${player.name} (all-in)`
+        : `${player.name} ${player.bankroll}`,
+      angle: normalized
+    };
+  });
+}
+
+function parseCardSuit(card: string): number {
+  if (!card || card.length < 2) return 0xb7c6da;
+  return SUIT_COLORS[card.slice(-1).toLowerCase()] ?? 0xb7c6da;
+}
+
+function buildBoardSlots(board: string[] | undefined) {
+  const xs = [-52, -26, 0, 26, 52];
+  return xs.map((x, index) => ({ id: `c${index + 1}`, x, y: -42, card: board?.[index] }));
+}
+
+function buildHeroSlots(heroCards: string[] | undefined) {
+  const xs = [-22, 22];
+  return xs.map((x, index) => ({ id: `h${index + 1}`, x, y: 62, card: heroCards?.[index] }));
+}
+
+function TableScene({ liveState, heroName }: NeonTableProps) {
   const ringRef = useRef<PixiContainer>(null);
   const pulseRef = useRef<PixiGraphics>(null);
-  const cardRefs = useRef<Array<PixiGraphics | null>>([]);
   const pulse = useRef(0);
-  const dealProgress = useRef(0);
+
+  const seats = useMemo(() => buildSeatLayout(liveState ?? null, heroName), [liveState, heroName]);
+  const boardSlots = useMemo(() => buildBoardSlots(liveState?.community_cards), [liveState?.community_cards]);
+  const heroSlots = useMemo(() => buildHeroSlots(liveState?.hero_cards), [liveState?.hero_cards]);
 
   useTick((delta) => {
     if (ringRef.current) {
@@ -46,28 +94,8 @@ function TableScene() {
       pulse.current += 0.02 * delta;
       pulseRef.current.alpha = 0.35 + Math.sin(pulse.current) * 0.15;
     }
-
-    dealProgress.current += delta;
-    const totalTimeline = DEAL_DURATION + cardTargets.length * DEAL_DELAY + 80;
-    if (dealProgress.current > totalTimeline) {
-      dealProgress.current = 0;
-    }
-
-    cardTargets.forEach((card, index) => {
-      const sprite = cardRefs.current[index];
-      if (!sprite) return;
-
-      const tRaw = (dealProgress.current - index * DEAL_DELAY) / DEAL_DURATION;
-      const t = Math.max(0, Math.min(1, tRaw));
-      const eased = 1 - Math.pow(1 - t, 3);
-      const bob = t === 1 ? Math.sin((dealProgress.current / 10) + index) * 1.5 : 0;
-
-      sprite.x = card.x * eased;
-      sprite.y = 8 + (card.y - 8) * eased + bob;
-      sprite.alpha = t;
-      sprite.scale.set(0.9 + 0.1 * t);
-    });
   });
+
   const drawTable = useCallback((graphics: PixiGraphics) => {
     graphics.clear();
     graphics.beginFill(0x0b1018, 0.95);
@@ -91,36 +119,29 @@ function TableScene() {
     graphics.drawCircle(0, 0, OUTER_RADIUS - 22);
   }, []);
 
-  const drawCard = useCallback((graphics: PixiGraphics) => {
+  const drawCardBack = useCallback((graphics: PixiGraphics) => {
     graphics.clear();
-    graphics.beginFill(0x111a27, 0.95);
-    graphics.drawRoundedRect(
-      -CARD_WIDTH / 2,
-      -CARD_HEIGHT / 2,
-      CARD_WIDTH,
-      CARD_HEIGHT,
-      6
-    );
+    graphics.beginFill(0x111a27, 0.9);
+    graphics.drawRoundedRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 6);
     graphics.endFill();
-    graphics.lineStyle(1, 0x28f4ff, 0.45);
-    graphics.drawRoundedRect(
-      -CARD_WIDTH / 2,
-      -CARD_HEIGHT / 2,
-      CARD_WIDTH,
-      CARD_HEIGHT,
-      6
-    );
-    graphics.lineStyle(0);
-    graphics.beginFill(0x1bd1b1, 0.6);
-    graphics.drawRoundedRect(-10, -14, 20, 6, 3);
+    graphics.lineStyle(1, 0x4d77ff, 0.6);
+    graphics.drawRoundedRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 6);
+  }, []);
+
+  const drawCardFront = useCallback((graphics: PixiGraphics) => {
+    graphics.clear();
+    graphics.beginFill(0x0f1a24, 0.95);
+    graphics.drawRoundedRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 6);
     graphics.endFill();
+    graphics.lineStyle(1, 0x28f4ff, 0.65);
+    graphics.drawRoundedRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 6);
   }, []);
 
   const seatStyle = useMemo(
     () =>
       new TextStyle({
         fontFamily: "Space Grotesk",
-        fontSize: 12,
+        fontSize: 11,
         fill: 0xb7c6da
       }),
     []
@@ -160,7 +181,21 @@ function TableScene() {
     []
   );
 
+  const cardTextStyle = useMemo(
+    () =>
+      new TextStyle({
+        fontFamily: "Space Grotesk",
+        fontSize: 14,
+        fill: 0xe7f0ff,
+        fontWeight: "bold"
+      }),
+    []
+  );
+
   const glowFilter = useMemo(() => [new BlurFilter(8)], []);
+
+  const potLabel = liveState?.pot_size != null ? `$${liveState.pot_size.toLocaleString()}` : "-";
+  const phaseLabel = liveState?.game_state ? liveState.game_state.toUpperCase() : "WAITING";
 
   return (
     <Container x={CENTER} y={CENTER}>
@@ -171,19 +206,58 @@ function TableScene() {
       </Container>
 
       <Text text="LIVE TABLE" anchor={0.5} y={-18} style={centerLabel} />
-      <Text text="$12.4K POT" anchor={0.5} y={4} style={centerPot} />
-      <Text text="TURN DECISION" anchor={0.5} y={28} style={centerAction} />
+      <Text text={potLabel} anchor={0.5} y={4} style={centerPot} />
+      <Text text={phaseLabel} anchor={0.5} y={28} style={centerAction} />
 
-      {cardTargets.map((card, index) => (
-        <Graphics
-          key={card.id}
-          draw={drawCard}
-          ref={(node) => {
-            cardRefs.current[index] = node;
-          }}
-          alpha={0}
-        />
-      ))}
+      {boardSlots.map((slot, index) => {
+        const card = slot.card;
+        return (
+          <Container key={slot.id} x={slot.x} y={slot.y}>
+            {card ? (
+              <>
+                <Graphics draw={drawCardFront} />
+                <Text
+                  text={card}
+                  anchor={0.5}
+                  style={
+                    new TextStyle({
+                      ...cardTextStyle,
+                      fill: parseCardSuit(card)
+                    })
+                  }
+                />
+              </>
+            ) : index < FALLBACK_BOARD_SLOTS && !liveState ? (
+              <Graphics draw={drawCardBack} alpha={0.3} />
+            ) : null}
+          </Container>
+        );
+      })}
+
+      {heroSlots.map((slot) => {
+        const card = slot.card;
+        return (
+          <Container key={slot.id} x={slot.x} y={slot.y}>
+            {card ? (
+              <>
+                <Graphics draw={drawCardFront} />
+                <Text
+                  text={card}
+                  anchor={0.5}
+                  style={
+                    new TextStyle({
+                      ...cardTextStyle,
+                      fill: parseCardSuit(card)
+                    })
+                  }
+                />
+              </>
+            ) : (
+              <Graphics draw={drawCardBack} alpha={0.5} />
+            )}
+          </Container>
+        );
+      })}
 
       {seats.map((seat) => {
         const angle = (seat.angle * Math.PI) / 180;
@@ -203,7 +277,7 @@ function TableScene() {
   );
 }
 
-export default function NeonTable() {
+export default function NeonTable({ liveState, heroName }: NeonTableProps = {}) {
   const devicePixelRatio = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
 
   return (
@@ -217,7 +291,7 @@ export default function NeonTable() {
         resolution: devicePixelRatio
       }}
     >
-      <TableScene />
+      <TableScene liveState={liveState} heroName={heroName} />
     </Stage>
   );
 }

@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import type { ShellContext } from "../components/Shell";
-import { getHandHistory, type HandHistory } from "../api/client";
+import {
+  buildHandExportUrl,
+  getHandHistory,
+  type HandHistory
+} from "../api/client";
 
 export default function Replay() {
   const { summary, activePlayer } = useOutletContext<ShellContext>();
@@ -26,6 +30,26 @@ export default function Replay() {
         <div className="section-header">
           <h2>Replay Vault</h2>
           <p>Review hand histories with grading overlays and coach notes.</p>
+          {activePlayer && hands.length > 0 && (
+            <div className="hero-actions" style={{ marginTop: 12 }}>
+              <a
+                className="btn ghost"
+                href={buildHandExportUrl(activePlayer, { fmt: "jsonl", limit: 500 })}
+                download={`${activePlayer}_hands.jsonl`}
+                rel="noopener noreferrer"
+              >
+                Download history (JSONL)
+              </a>
+              <a
+                className="btn ghost"
+                href={buildHandExportUrl(activePlayer, { fmt: "json", limit: 500 })}
+                download={`${activePlayer}_hands.json`}
+                rel="noopener noreferrer"
+              >
+                Download history (JSON)
+              </a>
+            </div>
+          )}
         </div>
         {activePlayer ? (
           <div className="card-grid">
@@ -39,9 +63,13 @@ export default function Replay() {
                     <span className="module-intensity">
                       Pot ${hand.pot_total ?? 0}
                     </span>
-                    <Link className="btn ghost" to="/table">
-                      Open Hand
-                    </Link>
+                    {hand.hand_number ? (
+                      <Link className="btn ghost" to={`/replay/${hand.hand_number}`}>
+                        Open Hand
+                      </Link>
+                    ) : (
+                      <span className="module-intensity">No replay</span>
+                    )}
                   </div>
                 </div>
               ))

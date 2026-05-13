@@ -1,0 +1,50 @@
+# PyHoldem Pro - single startup command
+# ---------------------------------------
+# Bring the whole stack up with:
+#
+#     docker compose up --build
+#
+# Then visit http://localhost:5173 in your browser. The frontend talks to the
+# API on http://localhost:8000.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: pyholdem-pro-backend
+    container_name: pyholdem-backend
+    environment:
+      PYHOLDEM_DATA_FILE: /data/players.json
+      PYHOLDEM_CORS_ORIGINS: "http://localhost:5173,http://localhost"
+      PYHOLDEM_SESSION_LIMIT: "64"
+      PYHOLDEM_SESSION_TTL_SECONDS: "3600"
+      PYTHONIOENCODING: utf-8
+    ports:
+      - "8000:8000"
+    volumes:
+      - pyholdem-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_URL: http://localhost:8000
+        VITE_WS_URL: ws://localhost:8000
+    image: pyholdem-pro-frontend
+    container_name: pyholdem-frontend
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "5173:80"
+
+volumes:
+  pyholdem-data:

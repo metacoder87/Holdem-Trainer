@@ -30,9 +30,18 @@ class PlayerSummary(BaseModel):
     last_played: Optional[str] = None
 
 
+class FocusQueueItem(BaseModel):
+    id: Optional[str] = None  # focus_area id when one applies
+    label: str
+
+
 class SummaryResponse(BaseModel):
     player: PlayerSummary
     live_metrics: List[Metric]
     training_tracks: List[TrainingTrack]
+    # Kept as a list of plain labels for backward compatibility.
     focus_queue: List[str]
+    # Rich form: each item carries an optional focus_area id the Drill page
+    # can deep-link to.
+    focus_queue_items: List[FocusQueueItem] = []
     timeline: List[TimelineEntry]

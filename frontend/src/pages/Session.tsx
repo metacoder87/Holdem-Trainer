@@ -3,6 +3,7 @@ import { Link, useOutletContext } from "react-router-dom";
 import type { ShellContext } from "../components/Shell";
 import NeonTable from "../components/NeonTable";
 import {
+  ApiError,
   getGameHandState,
   getGameSession,
   startGameHand,
@@ -10,6 +11,7 @@ import {
   type GameHandState,
   type GameSession
 } from "../api/client";
+import { useSessionSocket } from "../api/useSessionSocket";
 
 export default function Session() {
   const { summary } = useOutletContext<ShellContext>();
@@ -19,38 +21,60 @@ export default function Session() {
   const [pendingValue, setPendingValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // Only open the WebSocket once the session has been verified via HTTP -
+  // otherwise a stale localStorage id would dial a 4404 close immediately.
+  const socket = useSessionSocket(session?.id ?? null);
+
   useEffect(() => {
     const sessionId = localStorage.getItem("ph_session_id");
     if (!sessionId) return;
+
     getGameSession(sessionId)
-      .then((data) => setSession(data))
-      .catch((err) => setStatus(err.message || "Failed to load session"));
-    getGameHandState(sessionId)
-      .then((data) => setHandState(data))
-      .catch(() => null);
+      .then((data) => {
+        setSession(data);
+        getGameHandState(sessionId)
+          .then((handData) => setHandState(handData))
+          .catch(() => null);
+      })
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 404) {
+          // Stale id (e.g. from a previous server run). Clear it silently.
+          localStorage.removeItem("ph_session_id");
+          setSession(null);
+          setHandState(null);
+          setStatus(null);
+          return;
+        }
+        setStatus(err instanceof Error ? err.message : "Failed to load session");
+      });
   }, []);
+
+  // Push WebSocket state into local state (the canonical source of truth).
+  useEffect(() => {
+    if (socket.state) {
+      setHandState(socket.state);
+    }
+  }, [socket.state]);
 
   const startHand = useCallback(
     async (message?: string) => {
       if (!session) return;
       setSubmitting(true);
       try {
-        const nextState = await startGameHand(session.id);
-        setHandState(nextState);
-        if (message) {
-          setStatus(message);
+        if (socket.status === "open") {
+          socket.startHand();
         } else {
-          setStatus(null);
+          const nextState = await startGameHand(session.id);
+          setHandState(nextState);
         }
+        setStatus(message ?? null);
       } catch (err) {
-        if (err instanceof Error) {
-          setStatus(err.message);
-        }
+        if (err instanceof Error) setStatus(err.message);
       } finally {
         setSubmitting(false);
       }
     },
-    [session]
+    [session, socket]
   );
 
   useEffect(() => {
@@ -60,35 +84,30 @@ export default function Session() {
     startHand("Gameplay started. Awaiting first action.");
   }, [session, startHand]);
 
-  useEffect(() => {
-    if (!session || !handState) return;
-    if (handState.pending_input || handState.status !== "in_hand") return;
-    const timer = window.setTimeout(() => {
-      getGameHandState(session.id)
-        .then((data) => setHandState(data))
-        .catch(() => null);
-    }, 600);
-    return () => window.clearTimeout(timer);
-  }, [handState, session]);
-
   const pending = handState?.pending_input || null;
   const gameState = handState?.state;
+  const tournamentResult = handState?.tournament_result || null;
 
-  const handleChoice = async (choice: number) => {
+  const submitValue = async (value: number | boolean | string, choice?: number) => {
     if (!session) return;
     setSubmitting(true);
     try {
-      const nextState = await submitGameInput(session.id, { choice });
-      setHandState(nextState);
+      if (socket.status === "open") {
+        socket.submitInput(choice ?? value);
+      } else {
+        const payload = choice !== undefined ? { choice } : { value };
+        const nextState = await submitGameInput(session.id, payload);
+        setHandState(nextState);
+      }
       setStatus(null);
     } catch (err) {
-      if (err instanceof Error) {
-        setStatus(err.message);
-      }
+      if (err instanceof Error) setStatus(err.message);
     } finally {
       setSubmitting(false);
     }
   };
+
+  const handleChoice = (choice: number) => submitValue(choice, choice);
 
   const handleNumberSubmit = async () => {
     if (!session || !pending) return;
@@ -97,36 +116,11 @@ export default function Session() {
       setStatus("Enter a numeric value.");
       return;
     }
-    setSubmitting(true);
-    try {
-      const nextState = await submitGameInput(session.id, { value });
-      setHandState(nextState);
-      setStatus(null);
-      setPendingValue("");
-    } catch (err) {
-      if (err instanceof Error) {
-        setStatus(err.message);
-      }
-    } finally {
-      setSubmitting(false);
-    }
+    await submitValue(value);
+    setPendingValue("");
   };
 
-  const handleYesNo = async (value: boolean) => {
-    if (!session) return;
-    setSubmitting(true);
-    try {
-      const nextState = await submitGameInput(session.id, { value });
-      setHandState(nextState);
-      setStatus(null);
-    } catch (err) {
-      if (err instanceof Error) {
-        setStatus(err.message);
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const handleYesNo = (value: boolean) => submitValue(value);
 
   const handStatus = handState?.status;
   let actionContent = (
@@ -139,7 +133,13 @@ export default function Session() {
     actionContent = <div className="module-intensity">Hand in progress...</div>;
   }
 
-  if (pending?.kind === "menu") {
+  if (handStatus === "tournament_complete") {
+    actionContent = (
+      <div className="module-intensity">
+        Tournament finished. Open the bankroll tab to see your final cash.
+      </div>
+    );
+  } else if (pending?.kind === "menu") {
     actionContent = (
       <div className="action-grid">
         {(pending.options || []).map((option, index) => (
@@ -187,13 +187,23 @@ export default function Session() {
     );
   }
 
+  const lastHand = handState?.last_hand;
+  const lastHandNumber = lastHand?.hand_number;
+
   return (
     <>
       <section className="section split">
         <div className="panel">
           <div className="panel-header">
             <h2>Live Session</h2>
-            <p>{session ? `Session ${session.id}` : "Create a session in the game lobby."}</p>
+            <p>
+              {session ? `Session ${session.id}` : "Create a session in the game lobby."}
+              {session && (
+                <span style={{ marginLeft: 8 }}>
+                  ({socket.status === "open" ? "WS live" : `WS ${socket.status}`})
+                </span>
+              )}
+            </p>
           </div>
           {!session && (
             <Link className="btn primary" to="/games">
@@ -201,21 +211,79 @@ export default function Session() {
             </Link>
           )}
           <div className="table-canvas">
-            <NeonTable />
+            <NeonTable liveState={gameState ?? null} heroName={gameState?.hero_name ?? null} />
           </div>
           <div className="hero-actions">
             <button
               className="btn primary"
               type="button"
               onClick={() => startHand()}
-              disabled={!session || submitting || Boolean(pending)}
+              disabled={!session || submitting || Boolean(pending) || handStatus === "tournament_complete"}
             >
-              {pending ? "Awaiting Action" : "Play Next Hand"}
+              {handStatus === "tournament_complete"
+                ? "Tournament Over"
+                : pending
+                ? "Awaiting Action"
+                : "Play Next Hand"}
             </button>
-            <Link className="btn ghost" to="/replay">
-              Review Last Hand
-            </Link>
+            {lastHandNumber ? (
+              <Link className="btn ghost" to={`/replay/${lastHandNumber}`}>
+                Review Last Hand
+              </Link>
+            ) : (
+              <Link className="btn ghost" to="/replay">
+                Open Replay Vault
+              </Link>
+            )}
           </div>
+
+          {tournamentResult && (
+            <div className={`quiz-result ${tournamentResult.result === "won" ? "good" : "warn"}`}>
+              <strong>Tournament {tournamentResult.result.toUpperCase()}.</strong>{" "}
+              Cash bankroll restored to ${tournamentResult.final_bankroll.toLocaleString()}
+              {tournamentResult.result === "won"
+                ? "."
+                : tournamentResult.result === "lost"
+                ? " (no payout)."
+                : "."}
+            </div>
+          )}
+
+          {lastHand?.coach_notes && handStatus === "hand_complete" && (
+            <div className="panel" style={{ marginTop: 12, padding: 14 }}>
+              <div className="panel-header" style={{ marginBottom: 6 }}>
+                <h3 style={{ margin: 0 }}>
+                  Coach notes - Hand grade{" "}
+                  <span className={lastHand.coach_notes.hero_won ? "good" : "warn"}>
+                    {lastHand.coach_notes.hand_grade}
+                  </span>
+                </h3>
+                <p style={{ margin: 0 }}>{lastHand.coach_notes.headline}</p>
+              </div>
+              {lastHand.coach_notes.takeaway && (
+                <div className="timeline-detail" style={{ marginTop: 6 }}>
+                  {lastHand.coach_notes.takeaway}
+                </div>
+              )}
+              {lastHand.coach_notes.worst_decision && (
+                <div
+                  className={`timeline-detail ${
+                    lastHand.coach_notes.worst_decision.quality === "suboptimal" ? "warn" : ""
+                  }`}
+                  style={{ marginTop: 4 }}
+                >
+                  Biggest leak: {lastHand.coach_notes.worst_decision.line}
+                </div>
+              )}
+              {lastHandNumber && (
+                <div style={{ marginTop: 8 }}>
+                  <Link className="btn ghost" to={`/replay/${lastHandNumber}`}>
+                    Review full hand
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="action-panel">
             <div className="panel-header">
@@ -257,19 +325,62 @@ export default function Session() {
             </div>
           )}
 
-          {handState?.last_hand && (
+          {gameState?.hud?.opponents && gameState.hud.opponents.length > 0 && (
+            <div className="panel" style={{ marginTop: 12, padding: 10 }}>
+              <div className="panel-header" style={{ marginBottom: 6 }}>
+                <h3 style={{ margin: 0 }}>HUD</h3>
+                <p style={{ margin: 0 }}>Opponent profile (VPIP / PFR / AF)</p>
+              </div>
+              <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ textAlign: "left", opacity: 0.75 }}>
+                    <th>Player</th>
+                    <th>Type</th>
+                    <th>Hands</th>
+                    <th>VPIP</th>
+                    <th>PFR</th>
+                    <th>AF</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gameState.hud.opponents.map((opp) => (
+                    <tr key={opp.name}>
+                      <td>{opp.name}</td>
+                      <td>{opp.type}</td>
+                      <td>{opp.hands}</td>
+                      <td>{(opp.vpip * 100).toFixed(0)}%</td>
+                      <td>{(opp.pfr * 100).toFixed(0)}%</td>
+                      <td>
+                        {opp.aggression_factor >= 99
+                          ? "∞"
+                          : opp.aggression_factor.toFixed(1)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {lastHand && (
             <div className="demo-hand" style={{ marginTop: 16 }}>
               <div className="demo-row">
                 <span>Last Hand</span>
-                <span>#{handState.last_hand.hand_number ?? "-"}</span>
+                <span>
+                  {lastHandNumber ? (
+                    <Link to={`/replay/${lastHandNumber}`}>#{lastHandNumber}</Link>
+                  ) : (
+                    "-"
+                  )}
+                </span>
               </div>
               <div className="demo-row">
                 <span>Winners</span>
-                <span>{handState.last_hand.winners?.join(", ") || "-"}</span>
+                <span>{lastHand.winners?.join(", ") || "-"}</span>
               </div>
               <div className="demo-row">
                 <span>Pot</span>
-                <span>${handState.last_hand.pot_total ?? 0}</span>
+                <span>${lastHand.pot_total ?? 0}</span>
               </div>
             </div>
           )}

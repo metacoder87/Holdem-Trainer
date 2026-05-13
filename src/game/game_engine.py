@@ -2,6 +2,7 @@
 Game Engine module for PyHoldem Pro.
 Orchestrates the main game flow, betting rounds, and hand completion.
 """
+import builtins
 from enum import Enum
 from typing import List, Tuple, Optional, Dict, Any
 import random
@@ -14,6 +15,40 @@ from game.pot import Pot
 from game.hand import Hand
 from game.card import Card
 from stats.session_tracker import SessionTracker
+
+
+_real_print = builtins.print
+
+
+def _safe_print(*args, **kwargs):
+    """Print that never raises - swallows encoding/IO errors silently.
+
+    The engine emits emoji-heavy status messages (DEALING HOLE CARDS..., POSTING
+    BLINDS, etc.). When the API server runs in a Windows console (cp1252 by
+    default), encoding those emojis raises UnicodeEncodeError. That used to
+    bubble out of play_hand and kill the hand thread, leaving the UI stuck on
+    "betting stopped but no winner shown / no money changed hands".
+    """
+    try:
+        _real_print(*args, **kwargs)
+    except (UnicodeEncodeError, OSError):
+        # Fall back to an ASCII-safe rendering so the message still appears
+        # in the log without crashing gameplay.
+        try:
+            safe_args = []
+            for arg in args:
+                text = str(arg)
+                safe_args.append(text.encode("ascii", errors="replace").decode("ascii"))
+            _real_print(*safe_args, **kwargs)
+        except Exception:
+            # Last resort: silent. Gameplay must continue.
+            return
+
+
+# Shadow the module-level print so every print() in this file routes through
+# the safe wrapper. CLI users see exactly what they always saw; API users no
+# longer have hands killed by a stray emoji.
+print = _safe_print  # noqa: A001
 
 
 class GameState(Enum):
@@ -43,20 +78,42 @@ class GameEngine:
 
     LIMIT_MAX_BETS_PER_ROUND = 4
 
-    def __init__(self, human_player: Player, data_manager, display, input_handler):
+    def __init__(
+        self,
+        human_player: Player,
+        data_manager,
+        display,
+        input_handler,
+        *,
+        seed: Optional[int] = None,
+        rng: Optional[random.Random] = None,
+    ):
         """
         Initialize the game engine.
-        
+
         Args:
             human_player: The human player
             data_manager: Manager for data persistence
             display: UI display handler
             input_handler: User input handler
+            seed: Optional integer seed for deterministic deck shuffles. Mutually
+                exclusive with `rng`.
+            rng: Optional pre-built `random.Random` instance. Useful for
+                replays and tests.
         """
         self.human_player = human_player
         self.data_manager = data_manager
         self.display = display
         self.input_handler = input_handler
+
+        if rng is not None and seed is not None:
+            raise ValueError("Pass either seed or rng, not both")
+        if rng is not None:
+            self._rng: Optional[random.Random] = rng
+        elif seed is not None:
+            self._rng = random.Random(seed)
+        else:
+            self._rng = None
         
         # Game state
         self.game_state = GameState.WAITING
@@ -107,6 +164,10 @@ class GameEngine:
         self._raise_closed_players = set()
         self._game_analyzer = None
         self._decision_analyzer = None
+
+    def _new_deck(self) -> Deck:
+        """Create a deck bound to the engine's RNG so shuffles are deterministic."""
+        return Deck(rng=self._rng)
 
     def _is_fixed_limit(self) -> bool:
         return str(self.limit_type).lower() in {"limit", "fixed_limit", "fixed-limit"}
@@ -342,7 +403,7 @@ class GameEngine:
         self.pot = Pot()
         
         # Create deck
-        self.deck = Deck()
+        self.deck = self._new_deck()
         
     def _setup_tournament_table(
         self,
@@ -385,7 +446,7 @@ class GameEngine:
         self.pot = Pot()
         
         # Create deck
-        self.deck = Deck()
+        self.deck = self._new_deck()
         
     def _deal_hole_cards(self) -> None:
         """Deal hole cards to all players."""
@@ -710,6 +771,13 @@ class GameEngine:
 
                     if player != self.human_player:
                         print(f"   {player.name} goes all-in with ${all_in_amount:.0f}.")
+                    # Even a non-full all-in raise expresses aggressive intent
+                    # (the player put their whole stack in, hoping to win or
+                    # narrow the field). did_raise can be False if the size
+                    # was below the min-raise threshold (doesn't reopen
+                    # betting); is_aggressive_intent is true whenever the
+                    # all-in pushes beyond the current bet.
+                    aggressive_intent = new_total_bet > previous_highest_bet
                     self.session_tracker.record_action(
                         player_name=player.name,
                         action="all_in",
@@ -717,6 +785,7 @@ class GameEngine:
                         pot_before=int(pot_before),
                         betting_round=betting_round.value,
                         did_raise=bool(did_raise),
+                        is_aggressive_intent=bool(aggressive_intent),
                     )
 
             player_index = (player_index + 1) % num_players
@@ -1347,10 +1416,96 @@ class GameEngine:
         decision["quality"] = quality
         decision["analysis"] = analysis
 
+        # ----- EV-based grading -----------------------------------------
+        # On top of the OPTIMAL/ACCEPTABLE/SUBOPTIMAL bucket, compute the
+        # *expected chip cost* of the chosen action vs. the best available
+        # action. This gives the analytics dashboard the number it actually
+        # needs ("you bled 1.2 BB by calling this 3-bet") instead of just a
+        # category label.
+        #
+        # Only computed for postflop facing-bet spots where pot odds + equity
+        # already give us a clean EV model; preflop ranges are too coarse to
+        # produce a meaningful chip number with the current data.
+        try:
+            ev_payload = self._compute_decision_ev(
+                betting_round=betting_round,
+                pot_total=pot_total,
+                call_amount=call_amount,
+                equity=equity_estimate,
+                chosen=chosen,
+            )
+        except Exception:
+            ev_payload = None
+        if ev_payload is not None:
+            decision["ev_chips"] = ev_payload["ev_chips"]
+            decision["best_ev_chips"] = ev_payload["best_ev_chips"]
+            decision["ev_loss_chips"] = ev_payload["ev_loss_chips"]
+            decision["ev_loss_bb"] = ev_payload["ev_loss_bb"]
+            decision["ev_action_breakdown"] = ev_payload["actions"]
+
         try:
             self.session_tracker.record_decision(decision)
         except Exception:
             return
+
+    def _compute_decision_ev(
+        self,
+        *,
+        betting_round: str,
+        pot_total: int,
+        call_amount: int,
+        equity: float,
+        chosen: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the chip-denominated EV of the hero's chosen action.
+
+        Postflop facing-bet model (only spot we grade for EV today):
+            EV(fold) = 0
+            EV(call) = equity * (pot + call) - (1 - equity) * call
+                     = equity * (pot + 2*call) - call
+            EV(raise) is intentionally treated as "at least call" for now -
+            modeling fold equity correctly needs an opponent fold curve we
+            don't have yet. Captured as "raise_proxy" so 4.5 can flag this in
+            the UI.
+        """
+        if betting_round == "preflop":
+            return None
+        if call_amount <= 0 or pot_total <= 0 or equity <= 0:
+            return None
+
+        eq = max(0.0, min(1.0, float(equity)))
+        ev_call = eq * (float(pot_total) + float(call_amount)) - (1.0 - eq) * float(call_amount)
+        ev_fold = 0.0
+        # "Raise" cannot be cleanly graded here without an opponent model -
+        # use call as a lower bound. The dashboard surfaces this as approximate.
+        ev_raise_proxy = ev_call
+
+        actions = {
+            "fold": round(ev_fold, 2),
+            "call": round(ev_call, 2),
+            "raise_proxy": round(ev_raise_proxy, 2),
+        }
+        best_action = max(actions, key=actions.get)
+        best_ev = actions[best_action]
+
+        if chosen == "fold":
+            ev_chips = ev_fold
+        elif chosen in {"call", "raise", "all_in"}:
+            ev_chips = ev_call
+        else:
+            ev_chips = ev_fold  # "check" with no bet -> shouldn't reach here
+
+        ev_loss = ev_chips - best_ev  # negative or zero (chosen <= best)
+        big_blind = max(1, int(self.big_blind or 1))
+
+        return {
+            "ev_chips": round(ev_chips, 2),
+            "best_ev_chips": round(best_ev, 2),
+            "best_action": best_action,
+            "ev_loss_chips": round(ev_loss, 2),
+            "ev_loss_bb": round(ev_loss / big_blind, 3),
+            "actions": actions,
+        }
 
     def _classify_opponent_type(self, *, vpip: float, pfr: float, af: float) -> str:
         """Classify an opponent using simple VPIP/PFR/AF heuristics."""
@@ -1450,6 +1605,115 @@ class GameEngine:
         stats = self._get_table_player_stats()
         hero_name = self.human_player.name
         return {name: data for name, data in stats.items() if name != hero_name}
+
+    def _build_coach_notes(
+        self, *, winners: List[Player], pot_total: int
+    ) -> Optional[Dict[str, Any]]:
+        """Build a compact coach-notes payload for the UI.
+
+        The verbose feedback in `_show_post_hand_feedback` only fires when the
+        user opted into post-hand feedback at game-setup time. Coach notes are
+        a leaner subset that the frontend can render after every hand: the
+        single worst-graded decision + a one-line summary + an overall rating.
+
+        Returns None if there's no hand-history record to inspect yet.
+        """
+        history = getattr(self.session_tracker, "hand_history", None)
+        if not history:
+            return None
+
+        last_hand = history[-1]
+        if not isinstance(last_hand, dict):
+            return None
+
+        hero_name = self.human_player.name
+        hero_won = any(getattr(w, "name", None) == hero_name for w in winners)
+
+        # Headline: did the hero win/lose, for how much.
+        if hero_won:
+            net = int(pot_total) - int(
+                sum(
+                    int(a.get("amount") or 0)
+                    for a in (last_hand.get("actions") or [])
+                    if a.get("player") == hero_name
+                )
+            )
+            headline = f"You won the pot (${int(pot_total)})."
+            if net > 0:
+                headline = f"You won ${net} net from this hand."
+        else:
+            winner_names = ", ".join(getattr(w, "name", "?") for w in winners) or "?"
+            headline = f"{winner_names} won the pot (${int(pot_total)})."
+
+        # Pull the lowest-graded decision the hero made.
+        decisions = [
+            d for d in (last_hand.get("decision_points") or [])
+            if isinstance(d, dict)
+        ]
+        quality_order = {"suboptimal": 0, "acceptable": 1, "optimal": 2, "ungraded": 3, "mixed": 1}
+        worst = None
+        if decisions:
+            worst = min(
+                decisions,
+                key=lambda d: (quality_order.get(str(d.get("quality") or "ungraded"), 3), 0),
+            )
+
+        worst_summary = None
+        if worst and worst.get("quality") in {"suboptimal", "acceptable", "mixed"}:
+            chosen = str(worst.get("chosen_action", "")).upper() or "?"
+            recommended = worst.get("recommended_action") or "-"
+            street = worst.get("betting_round", "?")
+            equity = worst.get("equity")
+            need = worst.get("required_equity")
+            line = f"{street.title()}: you {chosen}, chart says {recommended}."
+            if isinstance(equity, (int, float)) and isinstance(need, (int, float)):
+                line += (
+                    f" Equity {equity * 100:.0f}% vs needed {need * 100:.0f}%."
+                )
+            worst_summary = {
+                "betting_round": street,
+                "chosen_action": worst.get("chosen_action"),
+                "recommended_action": recommended,
+                "quality": worst.get("quality"),
+                "equity": equity,
+                "required_equity": need,
+                "line": line,
+            }
+
+        # Overall hand grade: ratio of optimal+acceptable to total.
+        if decisions:
+            good = sum(
+                1
+                for d in decisions
+                if str(d.get("quality") or "") in {"optimal", "acceptable"}
+            )
+            ratio = good / len(decisions)
+            if ratio >= 0.85:
+                hand_grade = "A"
+            elif ratio >= 0.7:
+                hand_grade = "B"
+            elif ratio >= 0.5:
+                hand_grade = "C"
+            else:
+                hand_grade = "D"
+        else:
+            hand_grade = "—"
+
+        # Surface biggest learning point as a one-liner.
+        takeaway = None
+        if worst_summary:
+            takeaway = worst_summary["line"]
+        elif decisions:
+            takeaway = "Solid decisions across the hand. Keep the line."
+
+        return {
+            "hero_won": bool(hero_won),
+            "headline": headline,
+            "hand_grade": hand_grade,
+            "worst_decision": worst_summary,
+            "takeaway": takeaway,
+            "decision_count": len(decisions),
+        }
 
     def _show_post_hand_feedback(self, *, winners: List[Player], pot_total: int) -> None:
         """Display post-hand training feedback (if training modules are available)."""
@@ -1587,22 +1851,38 @@ class GameEngine:
         return winners
         
     def _distribute_pot(self, winners: List[Player]) -> None:
-        """
-        Distribute pot to winners.
-        
-        Args:
-            winners: List of winning players
+        """Distribute the pot to winners, honoring side-pot eligibility.
+
+        Previously this short-circuited "len(winners) == 1 -> take the whole
+        pot". That's wrong when the single showdown winner went all-in for
+        less than other contributors: the lone winner is only eligible for
+        contributions up to their own all-in amount, with the remainder going
+        to the next-best hand among the larger contributors.
+
+        Strategy:
+          * Walkover (no showdown - everyone else folded): give the whole pot
+            to the lone survivor. This is the *only* case where the
+            single-winner short-circuit is safe, because no side-pot
+            distribution would be required.
+          * Otherwise: build side pots from contributions, then distribute
+            each pot to the best-hand player(s) eligible for it.
         """
         if not winners or not self.pot:
             return
 
-        # If everyone else folded, the last player wins the entire pot (side pots irrelevant).
-        if len(winners) == 1:
-            winners[0].add_winnings(self.pot.total)
-            self.pot.reset()
-            return
+        # Walkover: only one player wasn't folded by the end of betting (the
+        # rest folded before showdown). The lone non-folder is eligible for
+        # everything contributed.
+        if self.table is not None:
+            non_folded = [
+                p for p in self.table.get_players_in_order() if not p.folded
+            ]
+            if len(non_folded) == 1 and winners == non_folded:
+                winners[0].add_winnings(self.pot.total)
+                self.pot.reset()
+                return
 
-        # Create side pots (no-ops if not needed) and distribute based on best hands.
+        # Build side pots from contributions, then distribute each pot.
         self.pot.create_side_pots()
 
         player_best_hands: Dict[Player, Hand] = {}
@@ -1639,7 +1919,7 @@ class GameEngine:
         """Play a complete hand from start to finish."""
         # Initialize hand
         self.community_cards = []
-        self.deck = Deck()
+        self.deck = self._new_deck()
         if self.pot:
             self.pot.reset()
         else:
@@ -1749,6 +2029,18 @@ class GameEngine:
                 winners=[w.name for w in winners],
                 pot_total=pot_total,
             )
+
+            # Always compute coach notes - the data exists regardless of
+            # whether the user opted into the verbose post-hand feedback panel.
+            # The API surfaces these on `last_hand.coach_notes` so the Session
+            # page can show a compact card after every hand.
+            try:
+                coach_notes = self._build_coach_notes(winners=winners, pot_total=pot_total)
+            except Exception:
+                coach_notes = None
+            if coach_notes and self.session_tracker.hand_history:
+                self.session_tracker.hand_history[-1]["coach_notes"] = coach_notes
+
             self._persist_last_hand_history(winners=winners, pot_total=pot_total)
 
             if self.training_enabled and self.post_hand_feedback_enabled:
@@ -2010,15 +2302,38 @@ class GameEngine:
                 sessions = list(existing_sessions)
         sessions.append(session_data)
 
+        # Aggregate over the player's full session history, weighted by hands
+        # played, so a single 12-hand session can't flip a 5,000-hand profile
+        # from "advanced" to "beginner".
         total_hands = sum(int(s.get("hands_played", 0)) for s in sessions)
-        metrics_for_progress = {
+
+        def _weighted_avg(metric: str) -> Optional[float]:
+            weighted_sum = 0.0
+            weight = 0.0
+            for s in sessions:
+                value = s.get(metric)
+                if value is None:
+                    continue
+                try:
+                    v = float(value)
+                except (TypeError, ValueError):
+                    continue
+                hands = int(s.get("hands_played", 0) or 0) or 1
+                weighted_sum += v * hands
+                weight += hands
+            return (weighted_sum / weight) if weight > 0 else None
+
+        pot_odds_quizzes_total = sum(int(s.get("pot_odds_quizzes", 0) or 0) for s in sessions)
+        metrics_for_progress: Dict[str, Any] = {
             "total_hands": total_hands,
-            "vpip": float(session_data.get("vpip", 0.0) or 0.0),
-            "pfr": float(session_data.get("pfr", 0.0) or 0.0),
-            "aggression_factor": float(session_data.get("aggression_factor", 0.0) or 0.0),
+            "vpip": _weighted_avg("vpip") or 0.0,
+            "pfr": _weighted_avg("pfr") or 0.0,
+            "aggression_factor": _weighted_avg("aggression_factor") or 0.0,
+            "pot_odds_samples": pot_odds_quizzes_total,
         }
-        if session_data.get("pot_odds_accuracy") is not None:
-            metrics_for_progress["pot_odds_accuracy"] = float(session_data["pot_odds_accuracy"])
+        pot_odds_accuracy = _weighted_avg("pot_odds_accuracy")
+        if pot_odds_accuracy is not None:
+            metrics_for_progress["pot_odds_accuracy"] = pot_odds_accuracy
 
         try:
             from training.progression_analyzer import ProgressionAnalyzer

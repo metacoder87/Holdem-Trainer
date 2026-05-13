@@ -1,0 +1,31 @@
+# PyHoldem Pro FastAPI backend
+# ---------------------------------
+# Single-stage image: installs runtime deps and serves the API on :8000.
+
+FROM python:3.11-slim AS backend
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=utf-8 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYHOLDEM_DATA_FILE=/data/players.json
+
+WORKDIR /app
+
+# Install dependencies first for cache reuse.
+COPY requirements.txt ./
+COPY backend/requirements.txt ./backend-requirements.txt
+RUN pip install -r requirements.txt -r backend-requirements.txt
+
+# Copy source and data.
+COPY src ./src
+COPY backend ./backend
+
+RUN mkdir -p /data /app/data
+
+EXPOSE 8000
+
+# Uvicorn loads app.main:app from the backend/ package.
+WORKDIR /app/backend
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -14,7 +14,9 @@ from jsonschema import validate, ValidationError
 
 class DataManager:
     """Manages player data persistence using JSON files."""
-    
+
+    SCHEMA_VERSION = "1.2"
+
     # JSON schema for player data validation
     PLAYER_SCHEMA = {
         "type": "object",
@@ -33,6 +35,32 @@ class DataManager:
         "required": ["name", "bankroll", "created_at"],
         "additionalProperties": True
     }
+
+    @staticmethod
+    def _migrate_player_record(record: Dict[str, Any], from_version: str) -> Dict[str, Any]:
+        """Apply forward-only migrations to a single player record.
+
+        Each branch handles a specific from_version transition. Add a new
+        branch when SCHEMA_VERSION bumps.
+        """
+        if not isinstance(record, dict):
+            return record
+
+        # 1.0 -> 1.1: backfill list-typed fields that newer code assumes exist.
+        if from_version in {None, "", "1.0"}:
+            for key in ("sessions", "recent_hands", "weaknesses", "recommended_topics"):
+                if key not in record:
+                    record[key] = []
+
+        # 1.1 -> 1.2: backfill quiz/practice history containers used by the
+        # persisted quiz + drill flows.
+        if from_version in {None, "", "1.0", "1.1"}:
+            record.setdefault("quiz_history", [])
+            record.setdefault("quiz_stats", {})
+            record.setdefault("practice_history", [])
+            record.setdefault("practice_stats", {})
+
+        return record
     
     def __init__(
         self,
@@ -357,33 +385,38 @@ class DataManager:
     def save_players(self):
         """
         Save player data to JSON file.
-        
+
         Raises:
             IOError: If file cannot be written
         """
         with self._lock:
+            payload = {
+                "_schema_version": self.SCHEMA_VERSION,
+                "_description": "PyHoldem Pro player data storage",
+                "players": self.players_data,
+            }
             try:
                 # Create backup before saving
                 if os.path.exists(self.data_file):
                     backup_file = f"{self.data_file}.bak"
                     os.rename(self.data_file, backup_file)
-                
+
                 # Save to file
                 with open(self.data_file, 'w', encoding='utf-8') as f:
-                    json.dump(self.players_data, f, indent=2, ensure_ascii=False)
-                    
-            except (IOError, OSError, PermissionError) as e:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
+
+            except (IOError, OSError, PermissionError):
                 # Restore backup if save failed
                 backup_file = f"{self.data_file}.bak"
                 if os.path.exists(backup_file):
                     os.rename(backup_file, self.data_file)
                 # Re-raise the original exception
                 raise
-    
+
     def load_players(self):
         """
         Load player data from JSON file.
-        
+
         Raises:
             json.JSONDecodeError: If file contains invalid JSON
         """
@@ -392,27 +425,36 @@ class DataManager:
                 # Create empty data structure
                 self.players_data = {}
                 return
-            
+
             try:
                 with open(self.data_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                
-                # Handle different file formats
+
+                file_version = None
                 if isinstance(data, dict):
-                    if "players" in data:
-                        # New format with metadata
+                    file_version = str(data.get("_schema_version") or "") or None
+                    if "players" in data and isinstance(data["players"], dict):
                         self.players_data = data["players"]
                     else:
-                        # Direct player data
+                        # Direct player data (legacy format)
                         self.players_data = data
                 else:
                     self.players_data = {}
-                    
+
+                if file_version != self.SCHEMA_VERSION:
+                    self._apply_migrations(file_version)
+
             except json.JSONDecodeError:
                 raise
             except Exception:
                 # If file is corrupted, start fresh
                 self.players_data = {}
+
+    def _apply_migrations(self, from_version: Optional[str]) -> None:
+        """Run forward migrations across all loaded players."""
+        for name, record in list(self.players_data.items()):
+            if isinstance(record, dict):
+                self.players_data[name] = self._migrate_player_record(record, from_version or "1.0")
     
     def backup_players_data(self, backup_file: str):
         """

@@ -11,7 +11,7 @@ import {
 } from "../api/client";
 
 export default function Training() {
-  const { summary } = useOutletContext<ShellContext>();
+  const { summary, activePlayer } = useOutletContext<ShellContext>();
   const [content, setContent] = useState<TrainingContent | null>(null);
   const [quizType, setQuizType] = useState("pot_odds");
   const [quiz, setQuiz] = useState<TrainingQuiz | null>(null);
@@ -49,7 +49,10 @@ export default function Training() {
       return;
     }
     try {
-      const result = await evaluateTrainingQuiz(quiz.correct_answer, value, 0.05);
+      const result = await evaluateTrainingQuiz(quiz.correct_answer, value, 0.05, {
+        playerName: activePlayer ?? undefined,
+        quizType: quiz.type ?? quizType
+      });
       setEvaluation(result);
       setStatus(null);
     } catch (err) {
@@ -91,8 +94,16 @@ export default function Training() {
             <p>Priority drills derived from your last session data.</p>
           </div>
           <ul className="focus-list">
-            {summary.focus_queue.map((item) => (
-              <li key={item}>{item}</li>
+            {(summary.focus_queue_items ?? summary.focus_queue.map((label) => ({ id: null, label }))).map((item) => (
+              <li key={item.label}>
+                {item.id ? (
+                  <Link to={`/training/drill?focus=${encodeURIComponent(item.id)}`}>
+                    {item.label}
+                  </Link>
+                ) : (
+                  item.label
+                )}
+              </li>
             ))}
           </ul>
           <Link className="btn primary" to="/training/drill">

@@ -8,6 +8,7 @@ import {
   Table,
   Analytics,
   Replay,
+  ReplayDetail,
   Session,
   Drill,
   NotFound,
@@ -63,6 +64,12 @@ const fallbackSummary: SummaryResponse = {
     "Blind defense sizing",
     "River bluff selectivity"
   ],
+  focus_queue_items: [
+    { id: null, label: "Button opens vs 3-bet" },
+    { id: null, label: "Turn barrel frequency" },
+    { id: null, label: "Blind defense sizing" },
+    { id: null, label: "River bluff selectivity" }
+  ],
   timeline: [
     { time: "10:12", label: "Hand 42", detail: "Missed thin value spot" },
     { time: "10:18", label: "Hand 43", detail: "Good fold vs polar river" },
@@ -80,28 +87,38 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    Promise.allSettled([getHealth(), getSummary(activePlayer || undefined)])
-      .then(([healthResult, summaryResult]) => {
-        if (!active) return;
-
-        if (summaryResult.status === "fulfilled") {
-          setSummary(summaryResult.value);
-          if (!activePlayer && summaryResult.value.player?.name) {
-            setActivePlayer(summaryResult.value.player.name);
-          }
-        }
-
-        setApiStatus(healthResult.status === "fulfilled" ? "online" : "offline");
+    getHealth()
+      .then(() => {
+        if (active) setApiStatus("online");
       })
       .catch(() => {
-        if (!active) return;
-        setApiStatus("offline");
+        if (active) setApiStatus("offline");
       });
 
     return () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    getSummary(activePlayer || undefined)
+      .then((value) => {
+        if (!active) return;
+        setSummary(value);
+        if (!activePlayer && value.player?.name) {
+          setActivePlayer(value.player.name);
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [activePlayer]);
 
   return (
     <BrowserRouter>
@@ -123,6 +140,7 @@ export default function App() {
           <Route path="training/drill" element={<Drill />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="replay" element={<Replay />} />
+          <Route path="replay/:handNumber" element={<ReplayDetail />} />
           <Route path="session" element={<Session />} />
           <Route path="bankroll" element={<Bankroll />} />
           <Route path="*" element={<NotFound />} />

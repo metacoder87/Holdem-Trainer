@@ -1,8 +1,10 @@
+import os
 import queue
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.core.paths import ensure_src_path, get_data_file
@@ -114,6 +116,10 @@ class ApiInputHandler:
         self._lock = threading.Lock()
         self._pending: Optional[InputRequest] = None
         self._last_error: Optional[str] = None
+        self._wake_event: Optional[threading.Event] = None
+
+    def attach_event(self, event: threading.Event) -> None:
+        self._wake_event = event
 
     def submit(self, value: Any) -> None:
         self._queue.put(value)
@@ -139,6 +145,8 @@ class ApiInputHandler:
         with self._lock:
             self._pending = request
             self._last_error = None
+        if self._wake_event is not None:
+            self._wake_event.set()
 
     def _wait_for(self, request: InputRequest, parser, validator, error_message: str) -> Any:
         self._set_pending(request)
@@ -228,6 +236,10 @@ class LiveSession:
     thread: Optional[threading.Thread] = None
     last_hand: Optional[Dict[str, Any]] = None
     last_error: Optional[str] = None
+    tournament_finalized: bool = False
+    tournament_result: Optional[Dict[str, Any]] = None
+    update_event: threading.Event = field(default_factory=threading.Event)
+    last_touched: float = field(default_factory=lambda: time.time())
 
     def public_dict(self) -> Dict[str, Any]:
         return {
@@ -240,7 +252,77 @@ class LiveSession:
         }
 
 
-SESSIONS: Dict[str, LiveSession] = {}
+_SESSION_LIMIT = int(os.getenv("PYHOLDEM_SESSION_LIMIT", "64") or "64")
+_SESSION_TTL_SECONDS = float(os.getenv("PYHOLDEM_SESSION_TTL_SECONDS", "3600") or "3600")
+
+
+class _SessionStore:
+    """Thread-safe LRU+TTL session registry.
+
+    Behaves like a dict for the existing code paths (clear, in, [], get, item
+    assignment) but evicts the least-recently-touched session when the soft
+    limit is exceeded and prunes sessions older than the TTL on read.
+    """
+
+    def __init__(self, *, limit: int, ttl_seconds: float):
+        self._limit = max(1, int(limit))
+        self._ttl = float(ttl_seconds)
+        self._lock = threading.Lock()
+        self._sessions: "OrderedDict[str, LiveSession]" = OrderedDict()
+
+    def _expired(self, session: LiveSession, now: float) -> bool:
+        if self._ttl <= 0:
+            return False
+        thread = session.thread
+        if thread and thread.is_alive():
+            return False
+        return (now - session.last_touched) > self._ttl
+
+    def _prune(self) -> None:
+        now = time.time()
+        for session_id in [sid for sid, s in self._sessions.items() if self._expired(s, now)]:
+            self._sessions.pop(session_id, None)
+        while len(self._sessions) > self._limit:
+            self._sessions.popitem(last=False)
+
+    def __setitem__(self, session_id: str, session: LiveSession) -> None:
+        with self._lock:
+            session.last_touched = time.time()
+            self._sessions[session_id] = session
+            self._sessions.move_to_end(session_id)
+            self._prune()
+
+    def __getitem__(self, session_id: str) -> LiveSession:
+        with self._lock:
+            self._prune()
+            session = self._sessions[session_id]
+            session.last_touched = time.time()
+            self._sessions.move_to_end(session_id)
+            return session
+
+    def get(self, session_id: str) -> Optional[LiveSession]:
+        with self._lock:
+            self._prune()
+            session = self._sessions.get(session_id)
+            if session is not None:
+                session.last_touched = time.time()
+                self._sessions.move_to_end(session_id)
+            return session
+
+    def clear(self) -> None:
+        with self._lock:
+            self._sessions.clear()
+
+    def __contains__(self, session_id: object) -> bool:
+        with self._lock:
+            return session_id in self._sessions
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._sessions)
+
+
+SESSIONS = _SessionStore(limit=_SESSION_LIMIT, ttl_seconds=_SESSION_TTL_SECONDS)
 
 
 def list_modes() -> List[Dict[str, Any]]:
@@ -316,7 +398,7 @@ def _build_engine(
     engine.input_handler = api_input
 
     session_id = uuid.uuid4().hex
-    return LiveSession(
+    session = LiveSession(
         id=session_id,
         player_name=player_name,
         game_type=game_type,
@@ -325,6 +407,8 @@ def _build_engine(
         engine=engine,
         input_handler=api_input,
     )
+    api_input.attach_event(session.update_event)
+    return session
 
 
 def create_session(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -358,35 +442,113 @@ def _derive_status(session: LiveSession) -> str:
         return "awaiting_input"
     if session.thread and session.thread.is_alive():
         return "in_hand"
+    if session.tournament_finalized:
+        return "tournament_complete"
     if session.last_hand:
         return "hand_complete"
     return "idle"
 
 
 def _wait_for_update(session: LiveSession, timeout: float = 1.0) -> None:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if session.input_handler.pending_request():
-            return
-        if session.thread and not session.thread.is_alive():
-            return
-        time.sleep(0.01)
+    """Block until the engine surfaces new state or the worker thread exits.
+
+    Wakes on either ApiInputHandler._set_pending (via the attached Event) or the
+    background thread completing. Caller should clear the event before
+    triggering a state change so the next call doesn't see the previous wake.
+    """
+    session.update_event.wait(timeout=timeout)
+    session.update_event.clear()
 
 
 def _serialize_state(session: LiveSession) -> Dict[str, Any]:
     state = session.engine.get_game_state()
-    state["hero_cards"] = [str(card) for card in session.engine.human_player.hole_cards]
-    state["hero_name"] = session.engine.human_player.name
-    state["hero_bankroll"] = int(session.engine.human_player.bankroll)
-    if session.engine.session_tracker.hand_history:
-        last_hand = session.engine.session_tracker.hand_history[-1]
+    engine = session.engine
+    state["hero_cards"] = [str(card) for card in engine.human_player.hole_cards]
+    state["hero_name"] = engine.human_player.name
+    state["hero_bankroll"] = int(engine.human_player.bankroll)
+    if engine.session_tracker.hand_history:
+        last_hand = engine.session_tracker.hand_history[-1]
         state["hand_number"] = last_hand.get("hand_number")
+
+    # HUD payload - opponent VPIP/PFR/AF/type so the UI doesn't have to compute
+    # it client-side. Cheap (already cached structure on the engine) and
+    # frontends that don't care about HUD can ignore the field.
+    try:
+        opponents = engine._get_opponent_stats_for_hud() or {}
+    except Exception:
+        opponents = {}
+    if opponents:
+        state["hud"] = {
+            "opponents": [
+                {
+                    "name": name,
+                    "hands": int(stats.get("hands", 0)),
+                    "vpip": float(stats.get("vpip", 0.0) or 0.0),
+                    "pfr": float(stats.get("pfr", 0.0) or 0.0),
+                    "aggression_factor": (
+                        99.9
+                        if stats.get("af") in (float("inf"), None)
+                        else float(stats.get("af", 0.0) or 0.0)
+                    ),
+                    "type": stats.get("type", "unknown"),
+                }
+                for name, stats in opponents.items()
+            ]
+        }
     return state
 
 
+def _maybe_finalize_tournament(session: LiveSession) -> None:
+    """Settle a tournament when it reaches a terminal state.
+
+    Without this, run_game_loop's settlement path is never invoked through the
+    REST flow (we drive play_hand by hand), so chip-stack -> cash conversion
+    and payout would never occur and the buy-in would be lost permanently.
+    """
+    engine = session.engine
+    if not engine.tournament_mode or session.tournament_finalized:
+        return
+    if engine.table is None:
+        return
+
+    try:
+        active = engine.table.get_players_in_tournament()
+    except Exception:
+        return
+
+    hero = engine.human_player
+    hero_eliminated = hero not in active
+    tournament_over = len(active) <= 1
+
+    if not (hero_eliminated or tournament_over):
+        return
+
+    if hero_eliminated:
+        result = "lost"
+    elif hero in active and len(active) == 1:
+        result = "won"
+    else:
+        result = "lost"
+
+    pre_finalize_bankroll = int(hero.bankroll)
+    try:
+        engine._finalize_tournament(result)
+    except Exception as exc:  # noqa: BLE001
+        session.last_error = f"Tournament settlement failed: {exc}"
+        return
+
+    session.tournament_finalized = True
+    session.tournament_result = {
+        "result": result,
+        "final_bankroll": int(hero.bankroll),
+        "chip_stack_at_end": pre_finalize_bankroll,
+    }
+
+
 def _build_hand_response(session: LiveSession) -> Dict[str, Any]:
+    _maybe_finalize_tournament(session)
     session.status = _derive_status(session)
-    return {
+    response: Dict[str, Any] = {
         "session_id": session.id,
         "status": session.status,
         "state": _serialize_state(session),
@@ -395,12 +557,18 @@ def _build_hand_response(session: LiveSession) -> Dict[str, Any]:
         "last_hand": session.last_hand,
         "error": session.last_error,
     }
+    if session.tournament_result is not None:
+        response["tournament_result"] = session.tournament_result
+    return response
 
 
 def start_hand(session_id: str) -> Dict[str, Any]:
     session = _get_live_session(session_id)
     if not session:
         raise KeyError("Session not found")
+
+    if session.tournament_finalized:
+        return _build_hand_response(session)
 
     if session.thread and session.thread.is_alive():
         _wait_for_update(session)
@@ -409,6 +577,7 @@ def start_hand(session_id: str) -> Dict[str, Any]:
     session.last_hand = None
     session.last_error = None
     session.input_handler.clear_pending()
+    session.update_event.clear()
     session.status = "in_hand"
 
     def run_hand() -> None:
@@ -422,6 +591,7 @@ def start_hand(session_id: str) -> Dict[str, Any]:
             session.last_error = str(exc)
         finally:
             session.status = _derive_status(session)
+            session.update_event.set()
 
     session.thread = threading.Thread(target=run_hand, daemon=True)
     session.thread.start()
@@ -480,6 +650,7 @@ def submit_input(session_id: str, value: Any) -> Dict[str, Any]:
             raise RuntimeError("No input is pending")
 
     coerced = _coerce_input_value(value, pending)
+    session.update_event.clear()
     session.input_handler.submit(coerced)
 
     _wait_for_update(session)

@@ -54,7 +54,31 @@ PyHoldem Pro is a terminal-based Texas Hold’em poker game and training platfor
 
 Dependencies are listed in `requirements.txt` (Rich, jsonschema). Dev/test tools are in `requirements-dev.txt`.
 
-## Install
+## Quick start with Docker (recommended)
+
+The whole stack (FastAPI backend + React frontend) runs with a single command:
+
+```bash
+docker compose up --build
+```
+
+Then open <http://localhost:5173>. The frontend talks to the API on
+<http://localhost:8000>. Player data + hand histories persist in the
+`pyholdem-data` Docker volume between runs.
+
+To stop:
+
+```bash
+docker compose down
+```
+
+To wipe persisted data:
+
+```bash
+docker compose down -v
+```
+
+## Install (without Docker)
 
 ```bash
 python -m venv venv
@@ -96,15 +120,20 @@ PYTHONPATH=backend uvicorn app.main:app --reload
 
 Useful endpoints:
 - `GET /health`
-- `GET /api/summary`
-- `GET /api/training/content`
-- `GET /api/training/quiz`
-- `GET /api/bankroll/players`
-- `POST /api/bankroll/players`
-- `PATCH /api/bankroll/players/{player_name}`
-- `GET /api/games/modes`
-- `POST /api/games/sessions`
-- `POST /api/games/sessions/{session_id}/demo-hand`
+- `GET /api/summary`, `GET /api/players`
+- `GET /api/bankroll/players`, `POST /api/bankroll/players`, `PATCH /api/bankroll/players/{player_name}`
+- `GET /api/games/modes`, `POST /api/games/sessions`, `POST /api/games/sessions/{session_id}/demo-hand`
+- `GET /api/games/sessions/{session_id}/hand`, `POST /api/games/sessions/{session_id}/hand/start`, `POST /api/games/sessions/{session_id}/hand/input`
+- `GET /api/training/content`, `GET /api/training/tracks`, `GET /api/training/quiz`, `POST /api/training/quiz/evaluate`
+- `POST /api/training/drills`, `POST /api/training/drills/answer`, `GET /api/training/drills/focus-areas`
+- `GET /api/analytics/summary`, `GET /api/analytics/leaks`
+- `GET /api/hands`, `GET /api/hands/export`, `GET /api/hands/{player}/{n}`, `GET /api/hands/{player}/{n}/replay`
+- `WS /ws/sessions/{session_id}` (live state stream)
+
+Environment variables:
+- `PYHOLDEM_DATA_FILE` - override the JSON data file location
+- `PYHOLDEM_CORS_ORIGINS` - comma-separated allowed origins (default `http://localhost:5173`)
+- `PYHOLDEM_SESSION_LIMIT` (default 64) and `PYHOLDEM_SESSION_TTL_SECONDS` (default 3600) - bound the in-memory session store
 
 ## Frontend (React)
 
@@ -152,18 +181,24 @@ If you want a clean slate, delete those files/directories (or back them up first
 
 ## Testing
 
-Run the full test suite:
+Backend (Python):
 
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-Or use the Makefile:
+Frontend (Vitest + jsdom):
 
 ```bash
-make test
+cd frontend
+npm install
+npm test          # one-shot
+npm run test:watch
+npm run typecheck
 ```
+
+Or use the Makefile (`make test`) for the backend suite.
 
 ## Project layout
 

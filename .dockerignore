@@ -1,0 +1,39 @@
+# Build outputs / caches
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/htmlcov/
+**/.coverage
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Node
+**/node_modules/
+**/dist/
+**/.vite/
+
+# Local data / venv
+venv/
+.venv/
+data/players.json
+data/players.json.bak
+data/hand_histories/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Worktrees / VCS
+.git/
+.gitignore
+.github/
+
+# Claude tooling
+.claude/
+
+# Tests + docs aren't needed at runtime
+tests/
+docs/
+*.md
+!README.md

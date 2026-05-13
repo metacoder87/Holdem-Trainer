@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import {
+  ApiError,
   createGameSession,
   getGameModes,
   getGameSession,
@@ -32,11 +33,24 @@ export default function Games() {
     const sessionId = localStorage.getItem("ph_session_id");
     if (!sessionId) return;
     getGameSession(sessionId)
-      .then((data) => setSession(data))
-      .catch((err) => setStatus(err.message || "Failed to load existing session"));
-    getGameHandState(sessionId)
-      .then((data) => setHandState(data))
-      .catch(() => null);
+      .then((data) => {
+        setSession(data);
+        getGameHandState(sessionId)
+          .then((handData) => setHandState(handData))
+          .catch(() => null);
+      })
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 404) {
+          // Stale id (server restarted, etc.). Clear silently and let the
+          // user create a fresh session from the lobby.
+          localStorage.removeItem("ph_session_id");
+          setSession(null);
+          setHandState(null);
+          setStatus(null);
+          return;
+        }
+        setStatus(err instanceof Error ? err.message : "Failed to load existing session");
+      });
   }, []);
 
   const resolveLimitType = (mode: GameMode) => {
@@ -51,12 +65,19 @@ export default function Games() {
     setLoadingMode(mode.id);
     setStatus(null);
     try {
-      const newSession = await createGameSession({
+      const definedDefaults: Record<string, number> = {};
+      for (const [key, value] of Object.entries(mode.defaults || {})) {
+        if (typeof value === "number") definedDefaults[key] = value;
+      }
+
+      const payload: Record<string, string | number> = {
         game_type: mode.id === "tournament" ? "tournament" : "cash",
         limit_type: limitType,
-        player_name: activePlayer || undefined,
-        ...mode.defaults
-      });
+        ...definedDefaults
+      };
+      if (activePlayer) payload.player_name = activePlayer;
+
+      const newSession = await createGameSession(payload);
       setSession(newSession);
       localStorage.setItem("ph_session_id", newSession.id);
       setHandState(null);

@@ -77,7 +77,8 @@ def build_summary(player_name: Optional[str] = None) -> Dict[str, Any]:
     ]
 
     training_tracks = _build_training_tracks(record, last_session)
-    focus_queue = _build_focus_queue(record)
+    focus_queue_items = _build_focus_queue_items(record)
+    focus_queue = [item["label"] for item in focus_queue_items]
     timeline = _build_timeline(record)
 
     return {
@@ -89,7 +90,33 @@ def build_summary(player_name: Optional[str] = None) -> Dict[str, Any]:
         "live_metrics": live_metrics,
         "training_tracks": training_tracks,
         "focus_queue": focus_queue,
+        "focus_queue_items": focus_queue_items,
         "timeline": timeline,
+    }
+
+
+def get_training_tracks(player_name: Optional[str] = None) -> Dict[str, Any]:
+    """Return training tracks + focus queue without the full dashboard payload."""
+    record = _load_player_record(player_name)
+    if not record:
+        default = _default_summary()
+        return {
+            "player": default["player"],
+            "training_tracks": default["training_tracks"],
+            "focus_queue": default["focus_queue"],
+            "focus_queue_items": default.get("focus_queue_items", []),
+        }
+
+    last_session, _ = _get_sessions(record)
+    focus_queue_items = _build_focus_queue_items(record)
+    return {
+        "player": {
+            "name": record.get("name", "Player"),
+            "skill_level": record.get("skill_level"),
+        },
+        "training_tracks": _build_training_tracks(record, last_session or {}),
+        "focus_queue": [item["label"] for item in focus_queue_items],
+        "focus_queue_items": focus_queue_items,
     }
 
 
@@ -143,18 +170,103 @@ def _get_sessions(record: Dict[str, Any]) -> List[Optional[Dict[str, Any]]]:
     return [last_session, prev_session]
 
 
+def _topic_accuracy(quiz_stats: Dict[str, Any], topic: str) -> Optional[float]:
+    """Return rolling accuracy for a specific quiz topic, or None."""
+    by_topic = quiz_stats.get("by_topic") if isinstance(quiz_stats, dict) else None
+    if not isinstance(by_topic, dict):
+        return None
+    bucket = by_topic.get(topic)
+    if not isinstance(bucket, dict):
+        return None
+    total = int(bucket.get("total", 0) or 0)
+    if total < 3:  # require some samples
+        return None
+    return float(bucket.get("accuracy", 0.0) or 0.0)
+
+
+def _practice_accuracy(practice_stats: Dict[str, Any], focus_area: str) -> Optional[float]:
+    """Return rolling accuracy for a specific drill focus area, or None."""
+    by_focus = practice_stats.get("by_focus") if isinstance(practice_stats, dict) else None
+    if not isinstance(by_focus, dict):
+        return None
+    bucket = by_focus.get(focus_area)
+    if not isinstance(bucket, dict):
+        return None
+    total = int(bucket.get("total", 0) or 0)
+    if total < 3:
+        return None
+    return float(bucket.get("accuracy", 0.0) or 0.0)
+
+
+def _signal_blend(*values: Optional[float], default: float = 0.0) -> float:
+    """Average defined values (None ignored), or default if none defined."""
+    present = [v for v in values if v is not None]
+    if not present:
+        return default
+    return sum(present) / len(present)
+
+
 def _build_training_tracks(record: Dict[str, Any], last_session: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Build progress bars from real per-topic stats when available.
+
+    Old behavior: used `abs(vpip - target) / 0.5` as a heuristic that produced
+    nonsense progress numbers from a single bad session. New behavior:
+      - Preflop track = max(in-range PFR/VPIP signal, preflop drill accuracy)
+      - Postflop track = max(AF-in-range signal, pot-odds quiz accuracy,
+        bet-sizing drill accuracy)
+      - Tournament = hands-played + tournament-mode session count
+      - Range vs Range = required-equity / implied-odds quiz accuracy
+
+    When stats are unavailable for a track we fall back to the old heuristic
+    so brand-new players still see *some* gradient.
+    """
+    quiz_stats = record.get("quiz_stats") if isinstance(record.get("quiz_stats"), dict) else {}
+    practice_stats = record.get("practice_stats") if isinstance(record.get("practice_stats"), dict) else {}
+    sessions = record.get("sessions") or []
+
     vpip = _metric(last_session, "vpip", 0.0)
     pfr = _metric(last_session, "pfr", 0.0)
     agg = _metric(last_session, "aggression_factor", 0.0)
     decision = _metric(last_session, "decision_accuracy", 0.0)
-    quiz_accuracy = _metric(last_session, "quiz_accuracy", 0.0)
-    hands_played = int(_metric(last_session, "hands_played", 0))
+    hands_played = sum(int(s.get("hands_played", 0) or 0) for s in sessions if isinstance(s, dict))
 
-    preflop_score = 1 - (abs(vpip - OPTIMAL["vpip"][2]) + abs(pfr - OPTIMAL["pfr"][2])) / 0.5
-    postflop_score = 1 - abs(agg - OPTIMAL["aggression_factor"][2]) / 3.0
+    def _band_signal(value: float, low: float, high: float) -> float:
+        """1.0 inside [low, high], decaying linearly outside."""
+        if low <= value <= high:
+            return 1.0
+        # Decay over the band width on each side
+        span = max(0.0001, high - low)
+        if value < low:
+            return max(0.0, 1.0 - (low - value) / span)
+        return max(0.0, 1.0 - (value - high) / span)
+
+    # Preflop track
+    preflop_band = _signal_blend(
+        _band_signal(vpip, *OPTIMAL["vpip"][:2]),
+        _band_signal(pfr, *OPTIMAL["pfr"][:2]),
+        default=0.0,
+    )
+    preflop_drills = _practice_accuracy(practice_stats, "too_loose")
+    preflop_score = _signal_blend(preflop_band, preflop_drills, default=preflop_band)
+
+    # Postflop track
+    postflop_band = _band_signal(agg, *OPTIMAL["aggression_factor"][:2])
+    pot_odds_quiz = _topic_accuracy(quiz_stats, "pot_odds")
+    bet_sizing_drills = _practice_accuracy(practice_stats, "poor_bet_sizing")
+    postflop_score = _signal_blend(postflop_band, pot_odds_quiz, bet_sizing_drills, default=postflop_band)
+
+    # Tournament track: mostly hands-played proxy + recent tournament sessions
+    tournament_sessions = [s for s in sessions if isinstance(s, dict) and s.get("game_type") == "tournament"]
     tournament_score = min(hands_played / 500.0, 1.0)
-    range_score = quiz_accuracy if quiz_accuracy > 0 else decision
+    if tournament_sessions:
+        tournament_score = max(tournament_score, min(1.0, len(tournament_sessions) / 10.0))
+
+    # Range vs Range track: required-equity + implied-odds quiz accuracy
+    range_signals = [
+        _topic_accuracy(quiz_stats, "required_equity"),
+        _topic_accuracy(quiz_stats, "implied_odds"),
+    ]
+    range_score = _signal_blend(*range_signals, default=decision if decision > 0 else 0.0)
 
     return [
         {
@@ -189,29 +301,48 @@ def _build_training_tracks(record: Dict[str, Any], last_session: Dict[str, Any])
 
 
 def _build_focus_queue(record: Dict[str, Any]) -> List[str]:
-    items: List[str] = []
+    """Backwards-compatible flat string list. New callers should prefer
+    `_build_focus_queue_items` which carries the focus_area id needed for
+    deep-linking from the dashboard to the drill engine.
+    """
+    return [item["label"] for item in _build_focus_queue_items(record)]
+
+
+def _build_focus_queue_items(record: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Build the rich focus queue with `{ id, label }` per item.
+
+    `id` is the WeaknessType value when the item came from a detected
+    weakness, otherwise `None`. The Drill page uses `id` to pre-fill the
+    focus_area on launch.
+    """
+    items: List[Dict[str, Any]] = []
+    seen_labels: set = set()
     weaknesses = record.get("weaknesses") or []
     topics = record.get("recommended_topics") or []
 
     for weakness in weaknesses:
-        label = WEAKNESS_LABELS.get(str(weakness).lower())
-        if label:
-            items.append(label)
+        key = str(weakness).lower()
+        label = WEAKNESS_LABELS.get(key)
+        if label and label not in seen_labels:
+            items.append({"id": key, "label": label})
+            seen_labels.add(label)
 
     for topic in topics:
         label = TOPIC_LABELS.get(str(topic).lower())
-        if label:
-            items.append(label)
+        if label and label not in seen_labels:
+            items.append({"id": None, "label": label})
+            seen_labels.add(label)
 
     if not items:
-        items = [
+        for fallback in [
             "Position-based range review",
             "Bet sizing calibration",
             "Turn barrel frequency",
             "River bluff selectivity",
-        ]
+        ]:
+            items.append({"id": None, "label": fallback})
 
-    return _dedupe(items)[:4]
+    return items[:4]
 
 
 def _build_timeline(record: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -344,6 +475,12 @@ def _default_summary() -> Dict[str, Any]:
             "Bet sizing calibration",
             "Turn barrel frequency",
             "River bluff selectivity",
+        ],
+        "focus_queue_items": [
+            {"id": None, "label": "Position-based range review"},
+            {"id": None, "label": "Bet sizing calibration"},
+            {"id": None, "label": "Turn barrel frequency"},
+            {"id": None, "label": "River bluff selectivity"},
         ],
         "timeline": [
             {"time": "00:00", "label": "Session start", "detail": "No recent hands yet"},
