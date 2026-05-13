@@ -8,7 +8,16 @@ export default defineConfig({
   },
   build: {
     target: "es2020",
-    sourcemap: true
+    sourcemap: true,
+    chunkSizeWarningLimit: 700,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/echarts")) return "charts";
+          if (id.includes("node_modules/pixi.js") || id.includes("node_modules/@pixi")) return "pixi";
+        }
+      }
+    }
   },
   test: {
     environment: "jsdom",

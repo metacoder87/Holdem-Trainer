@@ -43,10 +43,25 @@ def filter_hands(
     player: str = Query(..., description="Player name"),
     winner: Optional[str] = Query(None, description="Filter by winner ('hero' for current player, or specific name)"),
     min_pot: Optional[int] = Query(None, description="Minimum pot size"),
+    session_id: Optional[str] = Query(None, description="Filter by session id"),
+    game_type: Optional[str] = Query(None, description="Filter by game type"),
+    street: Optional[str] = Query(None, description="Filter by street"),
+    decision_quality: Optional[str] = Query(None, description="Filter by decision grade"),
+    weakness: Optional[str] = Query(None, description="Filter by weakness tag text"),
     limit: int = Query(50, le=100)
 ):
     """
     Filter hands by criteria (Winner, Pot Size).
     """
     manager = DataManager(data_file=str(get_data_file()))
-    return manager.get_filtered_hands(player, winner=winner, min_pot=min_pot, limit=limit)
+    return manager.get_filtered_hands(
+        player,
+        winner=winner,
+        min_pot=min_pot,
+        limit=limit,
+        session_id=session_id,
+        game_type=game_type,
+        street=street,
+        decision_quality=decision_quality,
+        weakness=weakness,
+    )

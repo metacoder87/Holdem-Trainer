@@ -40,11 +40,18 @@ Base URL: `http://localhost:8000`
 
 ## Training
 - `GET /api/training/content`
-- `GET /api/training/quiz?quiz_type=pot_odds`
+- `GET /api/training/quiz?player={name}&quiz_type=pot_odds`
+  - Returns a server-owned `quiz_id`, public question text, quiz type, and difficulty. Correct answers are not returned until evaluation.
 - `POST /api/training/quiz/evaluate`
-  - Body: `{ "correct_answer": 22.5, "user_answer": 23, "tolerance": 0.05 }`
+  - Body: `{ "quiz_id": "abc", "player": "Hero", "user_answer": 23, "tolerance": 0.05 }`
+  - Returns correctness, feedback, correct answer, explanation, and cumulative quiz stats for the player.
 - `GET /api/training/drill?player={name}&focus={weakness}`
-  - Returns a targeted scenario, quiz, and curriculum metadata.
+  - Returns a server-owned `drill_id`, targeted scenario, public quiz prompt, and curriculum metadata.
+- `POST /api/training/drill/evaluate`
+  - Body: `{ "drill_id": "abc", "player": "Hero", "user_answer": "call" }`
+  - Records the attempt and returns feedback, recommended actions, explanation, and updated progress.
+- `GET /api/training/progress?player={name}`
+  - Returns quiz/drill attempts, weakness history, mastery progress, and study recommendations. Pending quiz/drill answers are never returned.
 
 ## Hand Histories And Replay
 - `GET /api/hands?player={name}&limit=50&reverse=true`
@@ -54,6 +61,8 @@ Base URL: `http://localhost:8000`
 ## Analytics
 - `GET /api/stats/sessions?player={name}&limit=20`
   - Returns recorded session rows from the active persistence layer.
+- `GET /api/charts/{metric}?player={name}`
+  - Supported metrics include `vpip`, `pfr`, `aggression_factor`, `decision_accuracy`, `quiz_accuracy`, `profit`, `hands_played`, and `winrate`.
 
 ## WebSocket
 - `WS /ws/{session_id}`

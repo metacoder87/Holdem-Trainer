@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import type { ShellContext } from "../components/Shell";
-import { getHandHistory, type HandHistory } from "../api/client";
+import { getFilteredHands, getHandHistory, type HandHistory } from "../api/client";
 
 export default function Replay() {
   const { summary, activePlayer } = useOutletContext<ShellContext>();
   const [hands, setHands] = useState<HandHistory[]>([]);
+  const [winner, setWinner] = useState("");
+  const [street, setStreet] = useState("");
+  const [decisionQuality, setDecisionQuality] = useState("");
+  const [minPot, setMinPot] = useState("");
   const [status, setStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -20,6 +24,23 @@ export default function Replay() {
         setStatus(err.message || "Failed to load hand history");
       });
   }, [activePlayer, summary.player.name]);
+
+  const applyFilters = async () => {
+    const player = activePlayer || summary.player.name;
+    try {
+      const data = await getFilteredHands(player, {
+        winner: winner || undefined,
+        street: street || undefined,
+        decisionQuality: decisionQuality || undefined,
+        minPot: minPot ? Number(minPot) : undefined,
+        limit: 25
+      });
+      setHands(data);
+      setStatus(null);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Failed to filter hand history");
+    }
+  };
 
   return (
     <>
@@ -71,14 +92,46 @@ export default function Replay() {
         <div className="panel">
           <div className="panel-header">
             <h2>Filters</h2>
-            <p>Slice hands by position, stack depth, or opponent type.</p>
+            <p>Slice hands by result, pot size, street, or decision grade.</p>
           </div>
-          <ul className="focus-list">
-            <li>Button opens vs blinds</li>
-            <li>Short stack all-ins</li>
-            <li>River bluff catchers</li>
-            <li>Multiway pots</li>
-          </ul>
+          <div className="filter-grid">
+            <label>
+              Winner
+              <select value={winner} onChange={(event) => setWinner(event.target.value)}>
+                <option value="">Any</option>
+                <option value="hero">Hero</option>
+                <option value="Villain">Villain</option>
+              </select>
+            </label>
+            <label>
+              Street
+              <select value={street} onChange={(event) => setStreet(event.target.value)}>
+                <option value="">Any</option>
+                <option value="preflop">Preflop</option>
+                <option value="flop">Flop</option>
+                <option value="turn">Turn</option>
+                <option value="river">River</option>
+              </select>
+            </label>
+            <label>
+              Decision grade
+              <select value={decisionQuality} onChange={(event) => setDecisionQuality(event.target.value)}>
+                <option value="">Any</option>
+                <option value="optimal">Optimal</option>
+                <option value="acceptable">Acceptable</option>
+                <option value="suboptimal">Suboptimal</option>
+              </select>
+            </label>
+            <label>
+              Min pot
+              <input type="number" value={minPot} onChange={(event) => setMinPot(event.target.value)} />
+            </label>
+          </div>
+          <div className="hero-actions">
+            <button className="btn primary" type="button" onClick={applyFilters}>
+              Apply Filters
+            </button>
+          </div>
         </div>
 
         <div className="panel">

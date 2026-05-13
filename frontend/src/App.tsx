@@ -19,66 +19,28 @@ function PageBoundary({ children }: { children: ReactNode }) {
   return <Suspense fallback={<div className="page-loading">Loading...</div>}>{children}</Suspense>;
 }
 
-const fallbackSummary: SummaryResponse = {
+const emptySummary: SummaryResponse = {
   player: {
     name: "Guest",
     skill_level: "rookie",
     last_played: null
   },
   live_metrics: [
-    { label: "VPIP", value: "23%", delta: "+2%", tone: "good" },
-    { label: "PFR", value: "19%", delta: "+1%", tone: "good" },
-    { label: "AGG", value: "2.7", delta: "-0.2", tone: "warn" },
-    { label: "DEC", value: "64%", delta: "+4%", tone: "good" }
+    { label: "VPIP", value: "0%", delta: "+0%", tone: "warn" },
+    { label: "PFR", value: "0%", delta: "+0%", tone: "warn" },
+    { label: "AGG", value: "0.0", delta: "+0.0", tone: "warn" },
+    { label: "DEC", value: "0%", delta: "+0%", tone: "warn" }
   ],
-  training_tracks: [
-    {
-      title: "Preflop Mastery",
-      summary: "Ranges, position, open sizes, 3-bet defense",
-      cadence: "Daily drills",
-      intensity: "Core",
-      progress: 62
-    },
-    {
-      title: "Postflop Pressure",
-      summary: "Board texture, sizing, multi-street planning",
-      cadence: "Scenario lab",
-      intensity: "Advanced",
-      progress: 48
-    },
-    {
-      title: "Tournament Edge",
-      summary: "ICM, bubble play, stack depth, payout pressure",
-      cadence: "Event prep",
-      intensity: "Pro",
-      progress: 35
-    },
-    {
-      title: "Range vs Range",
-      summary: "Equity, blockers, node lock reviews",
-      cadence: "Solver review",
-      intensity: "Expert",
-      progress: 28
-    }
-  ],
-  focus_queue: [
-    "Button opens vs 3-bet",
-    "Turn barrel frequency",
-    "Blind defense sizing",
-    "River bluff selectivity"
-  ],
-  timeline: [
-    { time: "10:12", label: "Hand 42", detail: "Missed thin value spot" },
-    { time: "10:18", label: "Hand 43", detail: "Good fold vs polar river" },
-    { time: "10:26", label: "Hand 44", detail: "Check-raise timing leak" }
-  ]
+  training_tracks: [],
+  focus_queue: [],
+  timeline: []
 };
 
 export default function App() {
   const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">(
     "checking"
   );
-  const [summary, setSummary] = useState<SummaryResponse>(fallbackSummary);
+  const [summary, setSummary] = useState<SummaryResponse>(emptySummary);
   const [activePlayer, setActivePlayer] = useState<string | null>(null);
 
   useEffect(() => {

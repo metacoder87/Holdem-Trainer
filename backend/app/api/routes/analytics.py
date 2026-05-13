@@ -1,7 +1,6 @@
-from typing import List, Optional
-from fastapi import APIRouter, Query, HTTPException
-from app.core.paths import get_data_file
-from data.manager import DataManager
+from fastapi import APIRouter, Query
+
+from app.services.analytics_service import get_session_rows
 
 router = APIRouter(tags=["analytics"])
 
@@ -13,5 +12,4 @@ def get_player_sessions(
     """
     Get past game sessions for a player.
     """
-    manager = DataManager(data_file=str(get_data_file()))
-    return manager.get_sessions(player, limit=limit)
+    return get_session_rows(player, limit=limit)

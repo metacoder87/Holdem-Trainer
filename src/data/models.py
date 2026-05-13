@@ -48,6 +48,7 @@ class GameSession(Base):
     
     # Store full config just in case
     config: Mapped[Dict[str, Any]] = mapped_column(JsonType, default=dict)
+    data: Mapped[Dict[str, Any]] = mapped_column(JsonType, default=dict)
 
     player: Mapped["PlayerRecord"] = relationship(back_populates="sessions")
     hands: Mapped[list["HandRecord"]] = relationship(back_populates="session")

@@ -46,15 +46,30 @@ class AdaptiveTrainer:
             if weakness == WeaknessType.TOO_LOOSE:
                 focus_distribution['hand_selection'] = 0.3
                 focus_distribution['position'] = 0.2
+            elif weakness == WeaknessType.TOO_TIGHT:
+                focus_distribution['late_position_opens'] = 0.3
+                focus_distribution['profitable_steals'] = 0.2
             elif weakness == WeaknessType.TOO_PASSIVE:
                 focus_distribution['aggression'] = 0.3
                 focus_distribution['bet_sizing'] = 0.2
+            elif weakness == WeaknessType.TOO_AGGRESSIVE:
+                focus_distribution['bluff_selection'] = 0.3
+                focus_distribution['pot_control'] = 0.2
             elif weakness == WeaknessType.POOR_POT_ODDS:
                 focus_distribution['pot_odds'] = 0.4
                 focus_distribution['equity'] = 0.2
+            elif weakness == WeaknessType.POOR_POSITION_PLAY:
+                focus_distribution['position'] = 0.3
+                focus_distribution['blind_defense'] = 0.2
             elif weakness == WeaknessType.WEAK_3BET_DEFENSE:
                 focus_distribution['3bet_defense'] = 0.3
                 focus_distribution['hand_ranges'] = 0.2
+            elif weakness == WeaknessType.POOR_BET_SIZING:
+                focus_distribution['bet_sizing'] = 0.3
+                focus_distribution['value_targets'] = 0.2
+            elif weakness == WeaknessType.TILT_PRONE:
+                focus_distribution['session_pacing'] = 0.3
+                focus_distribution['reset_routines'] = 0.2
                 
         # Normalize distribution
         total = sum(focus_distribution.values())
@@ -88,13 +103,59 @@ class AdaptiveTrainer:
             WeaknessType.TOO_PASSIVE: {
                 'question': 'You have top pair on the flop. Pot is ${pot}. What should you bet?',
                 'type': 'bet_sizing',
-                'difficulty': self.current_difficulty
+                'difficulty': self.current_difficulty,
+                'correct_answer': 'bet',
+                'explanation': 'Top pair with a good kicker should often bet for value instead of defaulting to passive calls/checks.'
             },
             WeaknessType.TOO_LOOSE: {
                 'question': 'You are in early position with {hand}. Should you enter the pot?',
                 'type': 'hand_selection',
-                'difficulty': self.current_difficulty
-            }
+                'difficulty': self.current_difficulty,
+                'correct_answer': 'fold',
+                'explanation': 'Marginal offsuit hands lose value from early position because many players still act behind you.'
+            },
+            WeaknessType.TOO_TIGHT: {
+                'question': 'Folded to you on the button with K9 suited. What is the best default action?',
+                'type': 'late_position_opens',
+                'difficulty': self.current_difficulty,
+                'correct_answer': 'raise',
+                'explanation': 'Late position lets you open wider because you have fewer players behind and position postflop.'
+            },
+            WeaknessType.TOO_AGGRESSIVE: {
+                'question': 'Your flop bluff is called and the turn completes the front-door flush. What is the best default adjustment without a blocker?',
+                'type': 'bluff_selection',
+                'difficulty': self.current_difficulty,
+                'correct_answer': 'check',
+                'explanation': 'When the board worsens for your range and you lack blockers, reduce bluff frequency and control the pot.'
+            },
+            WeaknessType.POOR_POSITION_PLAY: {
+                'question': 'You face a cutoff open from the big blind with a marginal offsuit hand. What factor matters most?',
+                'type': 'position',
+                'difficulty': self.current_difficulty,
+                'correct_answer': 'position',
+                'explanation': 'Out-of-position hands realize less equity, so defense ranges must account for positional disadvantage.'
+            },
+            WeaknessType.WEAK_3BET_DEFENSE: {
+                'question': 'Button opens, small blind 3-bets, and you hold AQ suited on the button. What is the best default response?',
+                'type': '3bet_defense',
+                'difficulty': self.current_difficulty,
+                'correct_answer': 'continue',
+                'explanation': 'Strong suited broadways retain equity and playability against many 3-bet ranges.'
+            },
+            WeaknessType.POOR_BET_SIZING: {
+                'question': 'You value bet a strong hand on a wet flop. Should your sizing usually be small or large?',
+                'type': 'bet_sizing',
+                'difficulty': self.current_difficulty,
+                'correct_answer': 'large',
+                'explanation': 'Wet boards reward larger value/protection sizes because many worse draws and pairs can continue.'
+            },
+            WeaknessType.TILT_PRONE: {
+                'question': 'After two large lost pots, what is the best next action before continuing?',
+                'type': 'session_pacing',
+                'difficulty': self.current_difficulty,
+                'correct_answer': 'pause',
+                'explanation': 'A short reset protects decision quality when recent results may bias your next choices.'
+            },
         }
         
         template = quiz_templates.get(weakness, quiz_templates[WeaknessType.POOR_POT_ODDS])
@@ -119,7 +180,18 @@ class AdaptiveTrainer:
                 'bet': bet
             }
             
-        return template
+        question = (
+            template.get('question', '')
+            .replace('${pot}', '100')
+            .replace('${bet}', '40')
+            .replace('{hand}', 'J9 offsuit')
+        )
+        payload = dict(template)
+        payload['question'] = question
+        payload.setdefault('explanation', 'Choose the line that best addresses this leak.')
+        payload.setdefault('correct_answer', 'review')
+        payload['weakness_type'] = weakness.value
+        return payload
         
     def adjust_difficulty(self, performance_data: Dict[str, Any]) -> None:
         """
@@ -171,7 +243,57 @@ class AdaptiveTrainer:
                 'pot_size': 0,
                 'recommended_actions': ['fold marginal hands from early position'],
                 'learning_point': 'Tight is right from early position'
-            }
+            },
+            WeaknessType.TOO_TIGHT: {
+                'situation': 'Action folds to you on the button with a playable suited king',
+                'hand': 'K9 suited',
+                'pot_size': 30,
+                'your_position': 'button',
+                'opponents': 2,
+                'recommended_actions': ['open raise when stacks are healthy', 'use position to realize equity'],
+                'learning_point': 'Late position lets you profitably open more hands than early position'
+            },
+            WeaknessType.TOO_AGGRESSIVE: {
+                'situation': 'Your continuation bet was called and the turn completes a flush draw',
+                'pot_size': 180,
+                'your_position': 'cutoff',
+                'opponents': 1,
+                'recommended_actions': ['check more often without relevant blockers', 'continue bluffing with equity or blockers'],
+                'learning_point': 'Aggression needs range advantage, blockers, or equity to stay profitable'
+            },
+            WeaknessType.POOR_POSITION_PLAY: {
+                'situation': 'You defend the big blind and must act first on every postflop street',
+                'pot_size': 120,
+                'your_position': 'big blind',
+                'opponents': 1,
+                'recommended_actions': ['tighten marginal calls out of position', 'prefer hands with equity realization'],
+                'learning_point': 'Position changes how much equity your hand can realize'
+            },
+            WeaknessType.WEAK_3BET_DEFENSE: {
+                'situation': 'You open the button and face a small blind 3-bet',
+                'hand': 'AQ suited',
+                'pot_size': 150,
+                'your_position': 'button',
+                'opponents': 1,
+                'recommended_actions': ['continue with strong suited broadways', 'fold dominated offsuit hands'],
+                'learning_point': 'Good 3-bet defense separates hands that realize equity from dominated calls'
+            },
+            WeaknessType.POOR_BET_SIZING: {
+                'situation': 'You have an overpair on a connected two-tone flop',
+                'pot_size': 160,
+                'your_position': 'hijack',
+                'opponents': 1,
+                'recommended_actions': ['size up for value and protection', 'avoid tiny bets on wet boards'],
+                'learning_point': 'Board texture should influence value-bet sizing'
+            },
+            WeaknessType.TILT_PRONE: {
+                'situation': 'You lost two large pots in five hands and notice faster decisions',
+                'pot_size': 0,
+                'your_position': 'session',
+                'opponents': 0,
+                'recommended_actions': ['pause before the next hand', 'review whether decisions or variance caused the losses'],
+                'learning_point': 'Reset routines protect your strategy when emotion changes decision speed'
+            },
         }
         
         return scenarios.get(weakness, scenarios[WeaknessType.TOO_PASSIVE])
@@ -232,10 +354,13 @@ class AdaptiveTrainer:
         priority_order = [
             WeaknessType.POOR_POT_ODDS,  # Fundamental
             WeaknessType.TOO_LOOSE,       # Fundamental
+            WeaknessType.TOO_TIGHT,       # Fundamental
             WeaknessType.TOO_PASSIVE,     # Fundamental
+            WeaknessType.POOR_POSITION_PLAY,  # Intermediate
             WeaknessType.WEAK_3BET_DEFENSE,  # Intermediate
             WeaknessType.POOR_BET_SIZING,    # Intermediate
             WeaknessType.TOO_AGGRESSIVE,     # Advanced
+            WeaknessType.TILT_PRONE,          # Advanced
         ]
         
         sorted_weaknesses = sorted(weaknesses, 
@@ -270,20 +395,45 @@ class AdaptiveTrainer:
                 'Position-based hand selection',
                 'Table dynamics'
             ],
+            WeaknessType.TOO_TIGHT: [
+                'Late position opening ranges',
+                'Steal opportunities',
+                'Equity realization in position'
+            ],
             WeaknessType.TOO_PASSIVE: [
                 'Value betting',
                 'Bet sizing strategy',
                 'Aggression frequency'
+            ],
+            WeaknessType.TOO_AGGRESSIVE: [
+                'Bluff selection',
+                'Blocker awareness',
+                'Pot control'
             ],
             WeaknessType.POOR_POT_ODDS: [
                 'Pot odds calculation',
                 'Implied odds',
                 'Drawing hand strategy'
             ],
+            WeaknessType.POOR_POSITION_PLAY: [
+                'Position and equity realization',
+                'Blind defense',
+                'In-position pressure'
+            ],
             WeaknessType.WEAK_3BET_DEFENSE: [
                 '3-bet ranges',
                 'Defending vs 3-bets',
                 '4-bet strategy'
+            ],
+            WeaknessType.POOR_BET_SIZING: [
+                'Board texture sizing',
+                'Value targeting',
+                'Protection betting'
+            ],
+            WeaknessType.TILT_PRONE: [
+                'Session pacing',
+                'Reset routines',
+                'Decision quality checks'
             ]
         }
         

@@ -22,6 +22,12 @@ export default function Games() {
   const [status, setStatus] = useState<string | null>(null);
   const [tournamentLimitType, setTournamentLimitType] = useState("no_limit");
   const [loadingMode, setLoadingMode] = useState<string | null>(null);
+  const [trainingConfig, setTrainingConfig] = useState({
+    training: true,
+    in_game_quizzes: true,
+    hud: true,
+    post_hand_feedback: true
+  });
 
   useEffect(() => {
     getGameModes()
@@ -55,6 +61,7 @@ export default function Games() {
       const payload: Record<string, JsonValue> = {
         game_type: mode.id === "tournament" ? "tournament" : "cash",
         limit_type: limitType,
+        ...trainingConfig,
         ...mode.defaults
       };
       if (activePlayer) {
@@ -102,6 +109,21 @@ export default function Games() {
     }
   };
 
+  const setTrainingOption = (key: keyof typeof trainingConfig, value: boolean) => {
+    setTrainingConfig((current) => {
+      const next = { ...current, [key]: value };
+      if (key === "training" && !value) {
+        next.in_game_quizzes = false;
+        next.hud = false;
+        next.post_hand_feedback = false;
+      }
+      if (key !== "training" && value) {
+        next.training = true;
+      }
+      return next;
+    });
+  };
+
   const terminalReason = handState?.terminal_reason || handState?.state?.game_over_reason || session?.terminal_reason;
   const isGameOver = handState?.status === "game_over" || Boolean(terminalReason);
   const winningHandSummary = handState?.last_hand?.winning_hands
@@ -135,6 +157,40 @@ export default function Games() {
                   </label>
                 </div>
               )}
+              <div className="module-options training-options">
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={trainingConfig.training}
+                    onChange={(event) => setTrainingOption("training", event.target.checked)}
+                  />
+                  Training
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={trainingConfig.in_game_quizzes}
+                    onChange={(event) => setTrainingOption("in_game_quizzes", event.target.checked)}
+                  />
+                  Quizzes
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={trainingConfig.hud}
+                    onChange={(event) => setTrainingOption("hud", event.target.checked)}
+                  />
+                  HUD
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={trainingConfig.post_hand_feedback}
+                    onChange={(event) => setTrainingOption("post_hand_feedback", event.target.checked)}
+                  />
+                  Hand review
+                </label>
+              </div>
               <div className="module-footer">
                 <span className="module-intensity">Ready</span>
                 <div className="module-actions">

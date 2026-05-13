@@ -15,6 +15,11 @@ export default function ReplayDetail() {
     ?.map((winningHand) => `${winningHand.player}: ${winningHand.rank ?? "Winning hand"}${winningHand.cards?.length ? ` (${winningHand.cards.join(" ")})` : ""}`)
     .join("; ");
 
+  const formatPct = (value?: number) => {
+    if (typeof value !== "number") return null;
+    return `${(value * 100).toFixed(1)}%`;
+  };
+
   useEffect(() => {
     if (!player || !Number.isInteger(parsedHandNumber)) {
       setStatus("Select a valid player and hand.");
@@ -95,7 +100,24 @@ export default function ReplayDetail() {
                       <div className="timeline-label">
                         {decision.chosen_action ?? "Action"} vs {decision.recommended_action ?? "recommendation"}
                       </div>
-                      <div className="timeline-detail">{decision.quality ?? "ungraded"}</div>
+                      <div className="timeline-detail">
+                        {decision.quality ?? "ungraded"}
+                        {formatPct(decision.equity) && ` | equity ${formatPct(decision.equity)}`}
+                        {formatPct(decision.required_equity) && ` | required ${formatPct(decision.required_equity)}`}
+                      </div>
+                      {typeof decision.analysis?.reasoning === "string" && (
+                        <div className="timeline-detail">{decision.analysis.reasoning}</div>
+                      )}
+                      {decision.outs && Object.keys(decision.outs).length > 0 && (
+                        <div className="timeline-detail">
+                          Outs: {Object.entries(decision.outs).map(([key, value]) => {
+                            if (typeof value === "object" && value && "outs" in value) {
+                              return `${key} ${String(value.outs)}`;
+                            }
+                            return key;
+                          }).join(", ")}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

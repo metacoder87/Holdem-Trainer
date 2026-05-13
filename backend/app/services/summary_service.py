@@ -188,17 +188,17 @@ def _build_training_tracks(record: Dict[str, Any], last_session: Dict[str, Any])
             "progress": _clamp_percent(postflop_score),
         },
         {
-            "title": "Tournament Edge",
-            "summary": "ICM, bubble play, stack depth, payout pressure",
+            "title": "Tournament Basics",
+            "summary": "Stack depth, blind pressure, short-stack decisions",
             "cadence": "Event prep",
-            "intensity": "Pro",
+            "intensity": "Focused",
             "progress": _clamp_percent(tournament_score),
         },
         {
-            "title": "Range vs Range",
-            "summary": "Equity, blockers, node lock reviews",
-            "cadence": "Solver review",
-            "intensity": "Expert",
+            "title": "Equity Basics",
+            "summary": "Pot odds, outs, blockers, draw math",
+            "cadence": "Math review",
+            "intensity": "Core",
             "progress": _clamp_percent(range_score),
         },
     ]
@@ -341,17 +341,17 @@ def _default_summary() -> Dict[str, Any]:
                 "progress": 0,
             },
             {
-                "title": "Tournament Edge",
-                "summary": "ICM, bubble play, stack depth, payout pressure",
+                "title": "Tournament Basics",
+                "summary": "Stack depth, blind pressure, short-stack decisions",
                 "cadence": "Event prep",
-                "intensity": "Pro",
+                "intensity": "Focused",
                 "progress": 0,
             },
             {
-                "title": "Range vs Range",
-                "summary": "Equity, blockers, node lock reviews",
-                "cadence": "Solver review",
-                "intensity": "Expert",
+                "title": "Equity Basics",
+                "summary": "Pot odds, outs, blockers, draw math",
+                "cadence": "Math review",
+                "intensity": "Core",
                 "progress": 0,
             },
         ],
@@ -367,76 +367,12 @@ def _default_summary() -> Dict[str, Any]:
     }
 
 def get_chart_data(player_name: str, metric: str = "vpip") -> List[Dict[str, Any]]:
-    """
-    Returns session-by-session data for a specific metric.
-    """
-    record = _load_player_record(player_name)
-    if not record:
-        return []
+    from app.services.analytics_service import get_chart_data as build_chart_data
 
-    sessions = _sessions_for_record(record)
-    if not sessions:
-        return []
-
-    data = []
-    for i, session in enumerate(sessions):
-        val = _metric(session, metric, 0.0)
-        if metric in ["vpip", "pfr", "decision_accuracy"]:
-            val *= 100
-            
-        data.append({
-            "label": f"Session {i+1}",
-            "value": round(val, 1)
-        })
-    
-    return data
+    return build_chart_data(player_name, metric)
 
 
 def get_analytics_report(player_name: str) -> Dict[str, Any]:
-    """
-    Generate a deep analytics report for the player.
-    """
-    from stats.analyzer import PlayerAnalyzer
+    from app.services.analytics_service import get_analytics_report as build_analytics_report
 
-    record = _load_player_record(player_name)
-    if not record:
-        return {
-            "playing_style": {"player_type": "Unknown", "vpip": 0, "pfr": 0, "aggression_factor": 0},
-            "recommendations": ["Play more hands to generate data"],
-            "performance_metrics": {},
-            "strategy_score": 0
-        }
-
-    analyzer = PlayerAnalyzer()
-    sessions = _sessions_for_record(record)
-    total_hands = 0
-    vpip_sum = 0
-    pfr_sum = 0
-    agg_sum = 0
-    
-    for sess in sessions:
-        hands = int(sess.get("hands_played", 0))
-        total_hands += hands
-        vpip_sum += float(sess.get("vpip", 0)) * hands
-        pfr_sum += float(sess.get("pfr", 0)) * hands
-        agg_sum += float(sess.get("aggression_factor", 0)) * hands
-
-    agg_stats = {
-        "games_played": len(sessions),
-        "games_won": record.get("games_won", 0),
-        "total_winnings": record.get("total_winnings", 0),
-        "vpip": vpip_sum / total_hands if total_hands > 0 else 0,
-        "pfr": pfr_sum / total_hands if total_hands > 0 else 0,
-        "aggression_factor": agg_sum / total_hands if total_hands > 0 else 0,
-    }
-
-    report = analyzer.generate_player_report(agg_stats)
-    
-    # Calculate a synthetic strategy score (0-100)
-    # Penalize deviation from optimal VPIP/PFR/AGG
-    vpip_diff = abs(agg_stats["vpip"] - 0.24)
-    pfr_diff = abs(agg_stats["pfr"] - 0.18)
-    score = 100 - (vpip_diff * 100 + pfr_diff * 100)
-    report["strategy_score"] = max(0, min(100, int(score)))
-
-    return report
+    return build_analytics_report(player_name)

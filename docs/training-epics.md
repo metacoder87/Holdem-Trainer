@@ -1,5 +1,10 @@
 # Mastery Training Epics
 
+These are target epics for future mastery coverage. The current app implements
+foundational tracked play, server-owned quizzes, simple adaptive drills, hand
+replay, and heuristic decision grading; the deeper criteria below are not yet
+complete unless separately marked in the roadmap.
+
 Each epic includes clear acceptance criteria to reach "master-level" coverage.
 
 ## 1) Preflop Mastery

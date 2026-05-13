@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -35,6 +36,16 @@ def _parse_datetime(value: Any) -> Optional[datetime]:
         except ValueError:
             return None
     return None
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 class PostgresStore:
@@ -126,7 +137,7 @@ class PostgresStore:
         with self._session_scope() as session:
              row = session.get(PlayerRecord, player.name)
              if row:
-                 record = dict(row.data)
+                 record = dict(row.data or {})
                  record["bankroll"] = player.bankroll
                  for k, v in stats.items():
                      record[k] = v
@@ -171,6 +182,7 @@ class PostgresStore:
                 buy_in=int(session_data.get("config", {}).get("buy_in", 0) or 0),
                 hands_played=0,
                 config=session_data.get("config", {}),
+                data=_json_safe(dict(session_data)),
             )
             session.add(row)
 
@@ -178,31 +190,52 @@ class PostgresStore:
         with self._session_scope() as session:
             row = session.get(GameSession, session_id)
             if row:
+                data = dict(row.data or {})
+                data.update(_json_safe(updates))
+                row.data = data
                 if "hands_played" in updates:
                      row.hands_played = updates["hands_played"]
                 if "ended_at" in updates:
-                    row.ended_at = updates["ended_at"]
-                if "cash_out" in updates:
-                    row.cash_out = updates["cash_out"]
+                    row.ended_at = _parse_datetime(updates["ended_at"])
+                if "bankroll_end" in updates:
+                    row.cash_out = _safe_int(updates["bankroll_end"])
+                elif "cash_out" in updates:
+                    row.cash_out = _safe_int(updates["cash_out"])
 
     def get_sessions(self, player_name: str, limit: int = 50) -> List[Dict[str, Any]]:
         with self._session_scope() as session:
             stmt = select(GameSession).where(GameSession.player_name == player_name).order_by(GameSession.created_at.desc()).limit(limit)
             rows = session.execute(stmt).scalars().all()
-            return [
-                {
+            results = []
+            for r in rows:
+                data = dict(r.data or {})
+                data.update({
                     "id": r.id,
+                    "player_name": r.player_name,
                     "game_type": r.game_type,
-                    "created_at": r.created_at.isoformat(),
+                    "limit_type": r.limit_type,
+                    "created_at": r.created_at.isoformat() if r.created_at else data.get("created_at"),
+                    "ended_at": r.ended_at.isoformat() if r.ended_at else data.get("ended_at"),
                     "hands_played": r.hands_played,
                     "buy_in": r.buy_in,
                     "cash_out": r.cash_out,
-                    "net_result": (r.cash_out - r.buy_in) if r.cash_out is not None else 0
-                }
-                for r in rows
-            ]
+                    "net_result": (r.cash_out - r.buy_in) if r.cash_out is not None else data.get("net_result", 0),
+                })
+                results.append(data)
+            return results
 
-    def get_filtered_hands(self, player_name: str, winner: Optional[str] = None, min_pot: Optional[int] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_filtered_hands(
+        self,
+        player_name: str,
+        winner: Optional[str] = None,
+        min_pot: Optional[int] = None,
+        limit: int = 50,
+        session_id: Optional[str] = None,
+        game_type: Optional[str] = None,
+        street: Optional[str] = None,
+        decision_quality: Optional[str] = None,
+        weakness: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         with self._session_scope() as session:
              stmt = select(HandRecord).where(HandRecord.player_name == player_name)
              
@@ -214,10 +247,42 @@ class PostgresStore:
              
              if min_pot:
                  stmt = stmt.where(HandRecord.pot_size >= min_pot)
+
+             if session_id:
+                 stmt = stmt.where(HandRecord.session_id == session_id)
              
-             stmt = stmt.order_by(HandRecord.saved_at.desc()).limit(limit)
+             stmt = stmt.order_by(HandRecord.saved_at.desc()).limit(max(limit * 5, limit))
              rows = session.execute(stmt).scalars().all()
-             return [dict(r.data) for r in rows]
+             records = []
+             for row in rows:
+                 hand = dict(row.data or {})
+                 meta = hand.get("meta") if isinstance(hand.get("meta"), dict) else {}
+                 if game_type and str(meta.get("game_type") or hand.get("game_type") or "").lower() != str(game_type).lower():
+                     continue
+                 if street:
+                     actions = hand.get("actions") or []
+                     decisions = hand.get("decision_points") or []
+                     has_street = any(isinstance(action, dict) and action.get("betting_round") == street for action in actions)
+                     has_street = has_street or any(
+                         isinstance(decision, dict) and decision.get("betting_round") == street for decision in decisions
+                     )
+                     if not has_street:
+                         continue
+                 if decision_quality:
+                     decisions = hand.get("decision_points") or []
+                     if not any(
+                         isinstance(decision, dict)
+                         and str(decision.get("quality") or "").lower() == str(decision_quality).lower()
+                         for decision in decisions
+                     ):
+                         continue
+                 if weakness:
+                     if str(weakness).lower() not in json.dumps(hand.get("decision_points") or [], ensure_ascii=False).lower():
+                         continue
+                 records.append(hand)
+                 if len(records) >= limit:
+                     break
+             return records
 
     # --- Hand History Methods ---
 
@@ -274,7 +339,7 @@ class PostgresStore:
             row = session.get(PlayerRecord, name)
             if row:
                 row.bankroll = amount
-                record = dict(row.data)
+                record = dict(row.data or {})
                 record["bankroll"] = amount
                 record["last_played"] = _now().isoformat()
                 row.data = record
@@ -284,9 +349,13 @@ class PostgresStore:
          with self._session_scope() as session:
              row = session.get(PlayerRecord, name)
              if row:
-                record = dict(row.data)
-                record.update(stats)
+                record = dict(row.data or {})
+                record.update(_json_safe(stats))
                 row.data = record
+                if "bankroll" in stats:
+                    row.bankroll = _safe_int(stats["bankroll"])
+                if "skill_level" in stats:
+                    row.skill_level = stats["skill_level"]
                 row.last_played = _now()
 
     def player_exists(self, name: str) -> bool:

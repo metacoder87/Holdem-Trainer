@@ -1,46 +1,85 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import type { ShellContext } from "../components/Shell";
-import { getTrainingDrill, type TrainingDrill } from "../api/client";
+import {
+  evaluateTrainingDrill,
+  getTrainingDrill,
+  getTrainingProgress,
+  type DrillEvaluation,
+  type TrainingDrill,
+  type TrainingProgress
+} from "../api/client";
 
 export default function Drill() {
   const { summary, activePlayer } = useOutletContext<ShellContext>();
+  const player = activePlayer || summary.player.name || "Guest";
   const [drill, setDrill] = useState<TrainingDrill | null>(null);
+  const [progress, setProgress] = useState<TrainingProgress | null>(null);
+  const [answer, setAnswer] = useState("");
+  const [evaluation, setEvaluation] = useState<DrillEvaluation | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
-  useEffect(() => {
-    getTrainingDrill(activePlayer || summary.player.name)
+  const loadDrill = useCallback(() => {
+    getTrainingDrill(player)
       .then((data) => {
         setDrill(data);
+        setAnswer("");
+        setEvaluation(null);
         setStatus(null);
       })
       .catch((err) => {
         setStatus(err instanceof Error ? err.message : "Failed to load drill.");
       });
-  }, [activePlayer, summary.player.name]);
+  }, [player]);
+
+  const refreshProgress = useCallback(() => {
+    getTrainingProgress(player)
+      .then(setProgress)
+      .catch(() => null);
+  }, [player]);
+
+  useEffect(() => {
+    loadDrill();
+    refreshProgress();
+  }, [loadDrill, refreshProgress]);
+
+  const handleSubmit = async () => {
+    if (!drill || !answer.trim()) {
+      setStatus("Enter an answer for this drill.");
+      return;
+    }
+    try {
+      const result = await evaluateTrainingDrill(drill.drill_id, answer.trim(), player);
+      setEvaluation(result);
+      setStatus(null);
+      refreshProgress();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Failed to submit drill.");
+    }
+  };
 
   const scenario = drill?.scenario ?? {};
+  const mastery = drill ? progress?.mastery_progress?.[drill.focus_area] : undefined;
 
   return (
     <>
       <section className="section">
         <div className="section-header">
-          <h2>Guided Drill</h2>
-          <p>{drill ? `Current focus: ${drill.focus_area.replace(/_/g, " ")}` : "Scenario-based reps tailored to your highest-priority leaks."}</p>
+          <div>
+            <h2>Guided Drill</h2>
+            <p>{drill ? `Current focus: ${drill.focus_area.replace(/_/g, " ")}` : "Loading a tracked practice spot."}</p>
+          </div>
+          <button className="btn ghost" type="button" onClick={loadDrill}>
+            New Drill
+          </button>
         </div>
         {status && <div className="form-status">{status}</div>}
         <div className="card-grid">
-          {summary.focus_queue.map((item) => (
+          {(summary.focus_queue.length ? summary.focus_queue : progress?.study_recommendations ?? []).slice(0, 4).map((item) => (
             <div key={item} className="panel module-card">
-              <div className="module-label">Drill</div>
+              <div className="module-label">Focus</div>
               <h3>{item}</h3>
-              <p>Complete this drill to unlock your next progression badge.</p>
-              <div className="module-footer">
-                <span className="module-intensity">Target</span>
-                <Link className="btn primary" to="/session">
-                  Run Scenario
-                </Link>
-              </div>
+              <p>Practice results update this profile's training progress.</p>
             </div>
           ))}
         </div>
@@ -56,25 +95,50 @@ export default function Drill() {
             <li>Position: {String(scenario.your_position ?? "dynamic")}</li>
             <li>Pot: ${String(scenario.pot_size ?? 0)}</li>
             <li>Opponents: {String(scenario.opponents ?? "varies")}</li>
-            <li>{String(scenario.learning_point ?? "Compare your action to the recommended line.")}</li>
+            {drill?.quiz?.question && <li>{String(drill.quiz.question)}</li>}
           </ul>
+          <label className="drill-answer">
+            Your line
+            <input
+              type="text"
+              value={answer}
+              onChange={(event) => setAnswer(event.target.value)}
+              placeholder="Example: call, fold, bet, raise, pause"
+            />
+          </label>
+          <div className="hero-actions">
+            <button className="btn primary" type="button" onClick={handleSubmit}>
+              Submit Drill
+            </button>
+            <Link className="btn ghost" to="/training">
+              Back to Training
+            </Link>
+          </div>
         </div>
 
         <div className="panel">
           <div className="panel-header">
-            <h2>Performance Gate</h2>
-            <p>Unlock the next drill when you meet the threshold.</p>
+            <h2>Review</h2>
+            <p>{mastery == null ? "Mastery updates after completed drills." : `Current mastery: ${mastery}%`}</p>
           </div>
-          <ul className="focus-list">
-            {Array.isArray(scenario.recommended_actions) ? (
-              scenario.recommended_actions.map((action) => <li key={String(action)}>{String(action)}</li>)
-            ) : (
-              <li>Complete the current spot and review the recommended action.</li>
-            )}
-          </ul>
-          <Link className="btn ghost" to="/training">
-            Back to Training
-          </Link>
+          {evaluation ? (
+            <>
+              <div className={`quiz-result ${evaluation.correct ? "good" : "warn"}`}>
+                {evaluation.feedback}
+              </div>
+              <ul className="focus-list">
+                {evaluation.recommended_actions.map((action) => (
+                  <li key={action}>{action}</li>
+                ))}
+                {evaluation.explanation && <li>{evaluation.explanation}</li>}
+              </ul>
+            </>
+          ) : (
+            <ul className="focus-list">
+              <li>Submit an answer to reveal the recommended line.</li>
+              <li>Each attempt is saved to training progress.</li>
+            </ul>
+          )}
         </div>
       </section>
     </>

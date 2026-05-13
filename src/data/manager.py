@@ -768,12 +768,40 @@ class DataManager:
             records.sort(key=lambda s: s.get("updated_at") or s.get("ended_at") or s.get("started_at") or s.get("created_at") or "")
             return records[-limit:]
 
-    def get_filtered_hands(self, player_name: str, winner: Optional[str] = None, min_pot: Optional[int] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_filtered_hands(
+        self,
+        player_name: str,
+        winner: Optional[str] = None,
+        min_pot: Optional[int] = None,
+        limit: int = 50,
+        session_id: Optional[str] = None,
+        game_type: Optional[str] = None,
+        street: Optional[str] = None,
+        decision_quality: Optional[str] = None,
+        weakness: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         if self._use_db and self._db:
-             return self._db.get_filtered_hands(player_name, winner, min_pot, limit)
+             return self._db.get_filtered_hands(
+                 player_name,
+                 winner,
+                 min_pot,
+                 limit,
+                 session_id=session_id,
+                 game_type=game_type,
+                 street=street,
+                 decision_quality=decision_quality,
+                 weakness=weakness,
+             )
         records = self.load_hand_history(player_name, limit=max(limit * 5, limit), reverse=True)
         filtered: List[Dict[str, Any]] = []
         for hand in records:
+            meta = hand.get("meta") if isinstance(hand.get("meta"), dict) else {}
+            if session_id and hand.get("session_id") != session_id and meta.get("session_id") != session_id:
+                continue
+
+            if game_type and str(meta.get("game_type") or hand.get("game_type") or "").lower() != str(game_type).lower():
+                continue
+
             if winner:
                 winners = hand.get("winners") or []
                 if winner == "hero":
@@ -789,6 +817,30 @@ class DataManager:
                     if int(pot_total or 0) < int(min_pot):
                         continue
                 except (TypeError, ValueError):
+                    continue
+
+            if street:
+                actions = hand.get("actions") or []
+                decisions = hand.get("decision_points") or []
+                has_street = any(isinstance(action, dict) and action.get("betting_round") == street for action in actions)
+                has_street = has_street or any(
+                    isinstance(decision, dict) and decision.get("betting_round") == street for decision in decisions
+                )
+                if not has_street:
+                    continue
+
+            if decision_quality:
+                decisions = hand.get("decision_points") or []
+                if not any(
+                    isinstance(decision, dict)
+                    and str(decision.get("quality") or "").lower() == str(decision_quality).lower()
+                    for decision in decisions
+                ):
+                    continue
+
+            if weakness:
+                text = json.dumps(hand.get("decision_points") or [], ensure_ascii=False).lower()
+                if str(weakness).lower() not in text:
                     continue
 
             filtered.append(hand)

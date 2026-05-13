@@ -1,5 +1,9 @@
 # PyHoldem Pro Roadmap - Action Steps
 
+This roadmap mixes shipped foundations with aspirational strategy depth. Solver-grade
+EV analysis, ICM-aware grading, range-vs-range mastery, and long-form curriculum
+coverage are not complete unless called out as implemented below.
+
 This roadmap breaks the vision into completable steps with clear deliverables.
 Each step is intended to be independently shippable.
 
@@ -12,22 +16,22 @@ Each step is intended to be independently shippable.
   migration strategy.
 
 ## Phase 1 - FastAPI service foundation
-- [ ] Create FastAPI app skeleton with health endpoint. Deliverables: backend/app,
+- [x] Create FastAPI app skeleton with health endpoint. Deliverables: backend/app,
   requirements, run instructions.
 - [ ] Add auth and session model (guest + profile). Deliverables: token/session
   endpoints, middleware.
-- [ ] Game session APIs (create session, start hand, action). Deliverables: REST
+- [x] Game session APIs (create session, start hand, action). Deliverables: REST
   endpoints + WebSocket game stream.
-- [ ] Training APIs (quizzes, drills, reports). Deliverables: REST endpoints +
+- [x] Training APIs foundation (content, server-owned quizzes, drills, progress). Deliverables: REST endpoints +
   schemas.
-- [ ] Hand history APIs (list, detail, replay). Deliverables: pagination,
+- [x] Hand history APIs (list, detail, replay filters). Deliverables: pagination,
   filters, export.
 
 ## Phase 2 - Persistence and analytics
-- [ ] Introduce DB layer (SQLAlchemy + Alembic). Deliverables: models,
+- [x] Introduce DB layer (SQLAlchemy + Alembic). Deliverables: models,
   migrations, data import.
-- [ ] Analytics pipeline (stats snapshots, aggregates). Deliverables: scheduled
-  jobs, API endpoints.
+- [x] Analytics aggregate APIs for summaries, reports, charts, and session rows.
+- [ ] Scheduled analytics jobs and heavier background aggregation.
 - [ ] Background tasks for heavy work. Deliverables: worker interface
   (Celery/RQ), job queue.
 
@@ -44,10 +48,10 @@ Each step is intended to be independently shippable.
   state sync, optimistic actions.
 
 ## Phase 4 - Gameplay UI
-- [ ] Table view (players, pot, actions, betting controls).
-- [ ] Hand history and replay UI.
-- [ ] Training HUD overlays (odds, equity, hints).
-- [ ] Analytics dashboards (VPIP/PFR/AF, trends, leaks).
+- [x] Table view (players, pot, actions, betting controls).
+- [x] Hand history and replay UI with decision details and filters.
+- [ ] Browser-native training HUD overlays (terminal HUD exists; web overlay is partial).
+- [x] Analytics dashboards (multi-metric trends, leaks, recent sessions).
 
 ## Phase 5 - Mastery training system
 - [ ] Preflop curriculum. Deliverables: position ranges, open/call/3bet/4bet,

@@ -9,14 +9,13 @@ export default function Home() {
     <>
       <section className="hero">
         <div className="hero-copy">
-          <p className="eyebrow fade-up delay-1">Realtime coaching and cinematic feedback</p>
+          <p className="eyebrow fade-up delay-1">Tracked play, drills, and replay review</p>
           <h1 className="hero-title fade-up delay-2">
-            Master Texas Holdem with a neon-speed training engine
+            Practice Texas Holdem with a measured training loop
           </h1>
           <p className="hero-lead fade-up delay-3">
-            Build mastery with range-based drills, live HUD overlays, and a
-            precision replay vault. Every decision is graded, tracked, and
-            turned into the next lesson.
+            Play tracked sessions, answer server-graded quizzes, review saved
+            hands, and turn detected leaks into focused drills.
           </p>
           <div className="hero-actions fade-up delay-4">
             <Link className="btn primary" to="/training">
@@ -69,12 +68,12 @@ export default function Home() {
         <div className="section-header">
           <h2>Training Modules</h2>
           <p>
-            Precision curriculum built for tournament and cash mastery, with
-            drills that adapt to your leaks.
+            Current tracks are generated from recorded session metrics and
+            completed training attempts.
           </p>
         </div>
         <div className="card-grid">
-          {summary.training_tracks.map((track) => (
+          {summary.training_tracks.length > 0 ? summary.training_tracks.map((track) => (
             <div key={track.title} className="panel module-card">
               <div className="module-label">{track.cadence}</div>
               <h3>{track.title}</h3>
@@ -87,7 +86,13 @@ export default function Home() {
                 <span className="progress-text">{track.progress}%</span>
               </div>
             </div>
-          ))}
+          )) : (
+            <div className="panel module-card">
+              <div className="module-label">No data</div>
+              <h3>Play a tracked session</h3>
+              <p>Training modules appear once this profile has recorded hands.</p>
+            </div>
+          )}
         </div>
       </section>
 
@@ -95,12 +100,12 @@ export default function Home() {
         <div className="panel focus-panel">
           <div className="panel-header">
             <h2>Focus Queue</h2>
-            <p>Next up in your personalized study path.</p>
+            <p>Next up from your recorded leaks and study recommendations.</p>
           </div>
           <ul className="focus-list">
-            {summary.focus_queue.map((item) => (
+            {summary.focus_queue.length > 0 ? summary.focus_queue.map((item) => (
               <li key={item}>{item}</li>
-            ))}
+            )) : <li>No focus items yet.</li>}
           </ul>
           <Link className="btn primary" to="/training/drill">
             Launch Drill Set
@@ -110,7 +115,7 @@ export default function Home() {
         <div className="panel timeline-panel">
           <div className="panel-header">
             <h2>Session Timeline</h2>
-            <p>Live grading with instant corrections.</p>
+            <p>Recent tracked hands for this profile.</p>
           </div>
           <div className="timeline">
             {summary.timeline.map((entry) => (

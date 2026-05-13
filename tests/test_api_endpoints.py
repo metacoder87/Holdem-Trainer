@@ -59,14 +59,16 @@ def test_training_quiz_and_evaluation(client):
     assert quiz.status_code == 200
     payload = quiz.json()
     assert "question" in payload
-    assert "correct_answer" in payload
+    assert "quiz_id" in payload
+    assert "correct_answer" not in payload
 
     evaluate = client.post(
         "/api/training/quiz/evaluate",
-        json={"correct_answer": payload["correct_answer"], "user_answer": payload["correct_answer"]},
+        json={"quiz_id": payload["quiz_id"], "player": payload["player"], "user_answer": 19},
     )
     assert evaluate.status_code == 200
     assert evaluate.json()["correct"] is True
+    assert "explanation" in evaluate.json()
 
 
 def test_training_drill_endpoint(client):
@@ -76,6 +78,23 @@ def test_training_drill_endpoint(client):
     assert payload["focus_area"] == "poor_pot_odds"
     assert "scenario" in payload
     assert "quiz" in payload
+    assert "drill_id" in payload
+    assert "correct_answer" not in payload["quiz"]
+
+    result = client.post(
+        "/api/training/drill/evaluate",
+        json={"drill_id": payload["drill_id"], "player": payload["player"], "user_answer": payload["quiz"].get("type") == "pot_odds" and "no" or "fold"},
+    )
+    assert result.status_code == 200
+    assert "progress" in result.json()
+
+
+def test_training_progress_endpoint(client):
+    response = client.get("/api/training/progress?player=Guest")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["player"] == "Guest"
+    assert "quiz_stats" in payload
 
 
 def test_chart_data_uses_recorded_sessions_only(client):

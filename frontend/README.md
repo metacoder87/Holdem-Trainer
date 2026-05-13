@@ -1,6 +1,7 @@
 # PyHoldem Pro Frontend
 
-Stylish neon React frontend for the training platform.
+React frontend for the poker trainer, including gameplay, server-graded quizzes,
+guided drills, replay review, bankroll management, and multi-metric analytics.
 
 ## Stack
 - Vite + React + TypeScript

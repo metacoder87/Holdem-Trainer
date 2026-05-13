@@ -5,10 +5,11 @@ PyHoldem Pro is a terminal-based Texas Hold’em poker game and training platfor
 ## Status
 
 - Core gameplay and rules engine implemented (cash + tournament, limit + no-limit)
-- Training experience integrated (HUD, quizzes, post-hand feedback, adaptive session menu)
+- Training experience integrated (HUD, server-owned quizzes, post-hand feedback, adaptive session menu)
 - Hand history persistence + replay implemented (per-player JSONL histories)
 - Decision-point capture + grading implemented (stored per hand and summarized per session)
-- Test suite: 364 passing tests
+- Web training progress stores quiz/drill attempts per player profile
+- Test suite: 372 passing Python tests plus frontend Vitest coverage
 
 ## Features
 
@@ -39,6 +40,7 @@ PyHoldem Pro is a terminal-based Texas Hold’em poker game and training platfor
 - Session tracking (VPIP, PFR, aggression factor, quiz accuracy, decision accuracy)
 - Training Session mode with:
   - Personalized drills and scenarios (from identified weaknesses)
+  - Server-graded quiz and drill attempts persisted to the active player
   - Session review and career report
   - Recent hand review + replay
 
@@ -116,6 +118,10 @@ Useful endpoints:
 - `GET /api/summary`
 - `GET /api/training/content`
 - `GET /api/training/quiz`
+- `POST /api/training/quiz/evaluate`
+- `GET /api/training/drill`
+- `POST /api/training/drill/evaluate`
+- `GET /api/training/progress`
 - `GET /api/bankroll/players`
 - `POST /api/bankroll/players`
 - `PATCH /api/bankroll/players/{player_name}`
@@ -152,7 +158,7 @@ The API allows `http://localhost:5173` and `http://127.0.0.1:5173` by default; o
    - In-game quizzes
    - HUD
    - Post-hand feedback
-4. Play hands and review results
+4. Play hands, complete drills/quizzes, and review results
 
 ### Hand history replay
 

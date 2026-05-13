@@ -64,18 +64,19 @@ export type TrainingContent = {
 };
 
 export type TrainingQuiz = {
+  quiz_id: string;
+  player?: string;
+  generated_at?: string;
   type: string;
   question: string;
-  correct_answer: number;
-  correct_percentage?: number;
-  explanation: string;
   difficulty: number;
-  acceptable_range?: [number, number];
 };
 
 export type TrainingDrill = {
+  drill_id: string;
   player: string;
   focus_area: string;
+  generated_at?: string;
   configuration: {
     focus_areas: string[];
     quiz_distribution: Record<string, number>;
@@ -90,16 +91,52 @@ export type TrainingDrill = {
 
 export type QuizEvaluation = {
   correct: boolean;
-  user_answer: number;
-  correct_answer: number;
+  user_answer: JsonValue;
+  correct_answer: number | string;
   difference?: number;
   feedback: string;
+  explanation?: string;
+  quiz_id?: string;
+  quiz_type?: string;
   performance_stats?: {
     total_quizzes: number;
     correct_answers: number;
-    streak: number;
-    best_streak: number;
+    accuracy?: number | null;
+    streak?: number;
+    best_streak?: number;
   };
+};
+
+export type TrainingProgress = {
+  player: string;
+  schema_version?: number;
+  quiz_attempts: Array<Record<string, JsonValue>>;
+  drill_attempts: Array<Record<string, JsonValue>>;
+  weakness_history: Record<string, JsonValue>;
+  mastery_progress: Record<string, number>;
+  study_recommendations: string[];
+  quiz_stats: {
+    total: number;
+    correct: number;
+    accuracy?: number | null;
+  };
+  drill_stats: {
+    total: number;
+    correct: number;
+    accuracy?: number | null;
+  };
+};
+
+export type DrillEvaluation = {
+  drill_id: string;
+  focus_area: string;
+  correct: boolean;
+  feedback: string;
+  user_answer: JsonValue;
+  correct_answer: JsonValue;
+  explanation?: string;
+  recommended_actions: string[];
+  progress: Omit<TrainingProgress, "player">;
 };
 
 export type GameMode = {
@@ -154,8 +191,13 @@ export type HandHistory = {
   decision_points?: Array<{
     betting_round?: string;
     chosen_action?: string;
+    chosen_amount?: number;
     recommended_action?: string;
     quality?: string;
+    equity?: number;
+    required_equity?: number;
+    outs?: Record<string, JsonValue>;
+    analysis?: Record<string, JsonValue>;
   }>;
   meta?: Record<string, JsonValue>;
   board_by_street?: Record<string, string[]>;
@@ -239,22 +281,25 @@ export async function getTrainingContent() {
   return requestJson<TrainingContent>("/api/training/content");
 }
 
-export async function getTrainingQuiz(quizType: string, potSize?: number, betToCall?: number) {
+export async function getTrainingQuiz(quizType: string, player?: string, potSize?: number, betToCall?: number) {
   const params = new URLSearchParams({ quiz_type: quizType });
+  if (player) params.set("player", player);
   if (potSize !== undefined) params.set("pot_size", String(potSize));
   if (betToCall !== undefined) params.set("bet_to_call", String(betToCall));
   return requestJson<TrainingQuiz>(`/api/training/quiz?${params.toString()}`);
 }
 
 export async function evaluateTrainingQuiz(
-  correctAnswer: number,
-  userAnswer: number,
+  quizId: string,
+  userAnswer: JsonValue,
+  player?: string,
   tolerance = 0.05
 ) {
   return requestJson<QuizEvaluation>("/api/training/quiz/evaluate", {
     method: "POST",
     body: {
-      correct_answer: correctAnswer,
+      quiz_id: quizId,
+      player: player || null,
       user_answer: userAnswer,
       tolerance
     }
@@ -343,6 +388,24 @@ export async function getTrainingDrill(player?: string, focus?: string) {
   return requestJson<TrainingDrill>(`/api/training/drill${query}`);
 }
 
+export async function evaluateTrainingDrill(drillId: string, userAnswer: JsonValue, player?: string) {
+  return requestJson<DrillEvaluation>("/api/training/drill/evaluate", {
+    method: "POST",
+    body: {
+      drill_id: drillId,
+      player: player || null,
+      user_answer: userAnswer
+    }
+  });
+}
+
+export async function getTrainingProgress(player?: string) {
+  const params = new URLSearchParams();
+  if (player) params.set("player", player);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<TrainingProgress>(`/api/training/progress${query}`);
+}
+
 export async function getHandDetail(playerName: string, handNumber: number) {
   return requestJson<HandHistory>(
     `/api/hands/${encodeURIComponent(playerName)}/${handNumber}`
@@ -357,8 +420,38 @@ export async function getChartData(metric: string, player?: string) {
     `/api/charts/${encodeURIComponent(metric)}${query}`
   );
 }
+
+export async function getAnalyticsSessions(player: string, limit = 20) {
+  const params = new URLSearchParams({ player, limit: String(limit) });
+  return requestJson<Array<Record<string, JsonValue>>>(`/api/stats/sessions?${params.toString()}`);
+}
+
+export async function getFilteredHands(
+  playerName: string,
+  filters: {
+    winner?: string;
+    minPot?: number;
+    sessionId?: string;
+    gameType?: string;
+    street?: string;
+    decisionQuality?: string;
+    weakness?: string;
+    limit?: number;
+  } = {}
+) {
+  const params = new URLSearchParams({ player: playerName, limit: String(filters.limit ?? 50) });
+  if (filters.winner) params.set("winner", filters.winner);
+  if (filters.minPot !== undefined) params.set("min_pot", String(filters.minPot));
+  if (filters.sessionId) params.set("session_id", filters.sessionId);
+  if (filters.gameType) params.set("game_type", filters.gameType);
+  if (filters.street) params.set("street", filters.street);
+  if (filters.decisionQuality) params.set("decision_quality", filters.decisionQuality);
+  if (filters.weakness) params.set("weakness", filters.weakness);
+  return requestJson<HandHistory[]>(`/api/hands/filter?${params.toString()}`);
+}
 // Analytics Helper
 export type AnalyticsReport = {
+  basic_stats?: Record<string, JsonValue>;
   playing_style: {
     player_type: string;
     vpip: number;
@@ -368,6 +461,7 @@ export type AnalyticsReport = {
   recommendations: string[];
   performance_metrics: Record<string, JsonValue>;
   strategy_score?: number;
+  metric_options?: Record<string, string>;
 };
 
 export async function getAnalyticsReport(playerName?: string) {

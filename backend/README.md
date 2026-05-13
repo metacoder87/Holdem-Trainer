@@ -33,5 +33,6 @@ python scripts/migrate_json_to_db.py --db-url "$PYHOLDEM_DB_URL"
 ```
 
 ## Notes
-- The API will call into the existing engine in `src/` as endpoints are added.
-- WebSocket endpoints will stream live game state and training telemetry.
+- The API wraps the existing engine in `src/` for gameplay, training, replay, bankroll, and analytics.
+- Training quizzes and drills are server-owned: clients receive IDs and public prompts, then submit answers for backend grading.
+- WebSocket endpoints stream live game state; browser-native HUD overlays are still partial.
