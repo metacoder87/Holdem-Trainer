@@ -8,6 +8,22 @@ export const getWebSocketUrl = (path: string) => {
   return `${protocol}//${base.host}${normalizePath(path)}`;
 };
 
+// Convenience base for callers that want to build their own ws:// path. Either
+// VITE_WS_URL takes precedence (so docker-compose can swap the wsk URL at
+// build time) or we derive it from API_URL.
+export const WS_URL =
+  (import.meta.env.VITE_WS_URL as string | undefined) ||
+  API_URL.replace(/^http/, "ws");
+
+// Surfaced so callers (Session.tsx) can distinguish 404/410 "stale session"
+// from generic network failures. `requestJson` throws this for !response.ok.
+export class ApiError extends Error {
+  constructor(public status: number, message: string, public body?: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export type Metric = {
@@ -201,6 +217,33 @@ export type HandHistory = {
   }>;
   meta?: Record<string, JsonValue>;
   board_by_street?: Record<string, string[]>;
+  // Optional engine output - present when the post-hand feedback pipeline
+  // populates it. Session.tsx renders a card when this is non-null.
+  coach_notes?: {
+    hero_won: boolean;
+    headline: string;
+    hand_grade: string;
+    takeaway?: string | null;
+    worst_decision?: {
+      betting_round?: string;
+      chosen_action?: string;
+      recommended_action?: string;
+      quality?: string;
+      equity?: number;
+      required_equity?: number;
+      line?: string;
+    } | null;
+    decision_count?: number;
+  } | null;
+};
+
+export type HudOpponent = {
+  name: string;
+  hands: number;
+  vpip: number;
+  pfr: number;
+  aggression_factor: number;
+  type: string;
 };
 
 export type PendingInput = {
@@ -233,6 +276,17 @@ export type LiveGameState = {
   hero_bankroll?: number;
   hand_number?: number;
   game_over_reason?: string | null;
+  // Optional HUD payload - present when the engine has enough hand history to
+  // compute opponent stats. Session.tsx renders a table when populated.
+  hud?: {
+    opponents: HudOpponent[];
+  } | null;
+};
+
+export type TournamentResult = {
+  result: "won" | "lost" | "forfeit";
+  final_bankroll: number;
+  chip_stack_at_end?: number;
 };
 
 export type GameHandState = {
@@ -244,6 +298,9 @@ export type GameHandState = {
   last_hand?: HandHistory | null;
   terminal_reason?: string | null;
   error?: string | null;
+  // Populated when a tournament resolves (won/lost/forfeit). Used by Session.tsx
+  // to render a one-line settlement banner.
+  tournament_result?: TournamentResult | null;
 };
 
 type RequestOptions = Omit<RequestInit, "body"> & {
@@ -262,7 +319,11 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
 
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || `Request failed: ${response.status}`);
+    throw new ApiError(
+      response.status,
+      message || `Request failed: ${response.status}`,
+      message
+    );
   }
 
   return response.json() as Promise<T>;

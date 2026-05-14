@@ -130,7 +130,7 @@ Useful endpoints:
 - `GET /api/games/sessions/{session_id}`
 - `POST /api/games/sessions/{session_id}/hand/start`
 - `POST /api/games/sessions/{session_id}/hand/input`
-- `WS /ws/{session_id}`
+- `WS /ws/sessions/{session_id}`
 - `POST /api/games/sessions/{session_id}/demo-hand`
 
 ## Frontend (React)

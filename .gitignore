@@ -73,3 +73,9 @@ data/hand_histories/
 # Test output
 results.txt
 test_output.txt
+
+# Audit / diff artifacts (never commit these to main)
+main_diff.patch
+main_untracked_*.txt
+*.codex-logs/
+.codex-logs/

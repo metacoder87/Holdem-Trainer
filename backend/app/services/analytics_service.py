@@ -174,3 +174,113 @@ def get_analytics_report(player_name: Optional[str]) -> Dict[str, Any]:
 
 def get_session_rows(player_name: str, limit: int = 20) -> List[Dict[str, Any]]:
     return sessions_for_player(player_name, limit=limit)
+
+
+def get_career_report(player_name: Optional[str]) -> Dict[str, Any]:
+    """Wrap CareerTracker so the long-term aggregates + milestones become
+    an HTTP endpoint instead of CLI-only output.
+
+    Returns a 200-shaped payload even when the player has no sessions yet;
+    the route does not 404 on an empty career so the frontend can render a
+    placeholder.
+    """
+    from training.career_tracker import CareerTracker  # lazy import: keeps
+    # `app.services.analytics_service` import cheap when career isn't used.
+
+    record = load_player_record(player_name)
+    if not record:
+        return {
+            "player": None,
+            "career_metrics": None,
+            "session_count": 0,
+            "milestones": [],
+        }
+
+    name = record.get("name") or "Player"
+    sessions = sessions_for_player(name, limit=200)
+
+    tracker = CareerTracker(player_name=name)
+    for session in sessions:
+        snapshot = dict(session)
+        # CareerTracker expects `profit`; some persistence paths write
+        # `net_result` instead. Normalize so both work.
+        snapshot.setdefault("profit", snapshot.get("net_result", 0))
+        try:
+            tracker.record_session(snapshot)
+        except Exception:
+            continue
+
+    report = tracker.generate_career_report()
+    return {
+        "player": {
+            "name": name,
+            "skill_level": record.get("skill_level"),
+        },
+        "career_metrics": report.get("career_metrics"),
+        "session_count": len(sessions),
+        "trends": report.get("trends"),
+        "milestones": report.get("milestones") or [],
+        "skill_progression": report.get("skill_progression"),
+    }
+
+
+def get_session_report(
+    player_name: Optional[str], session_index: Optional[int] = None
+) -> Dict[str, Any]:
+    """Run SessionReviewer.generate_session_report against one session.
+
+    `session_index` is 0-based into the player's sessions list, or None to
+    pick the most recent (last_session). Returns `{ ..., "report": None }`
+    when no session can be resolved; the route turns that into a 404.
+    """
+    from training.analyzer import SessionReviewer  # lazy import
+
+    record = load_player_record(player_name)
+    if not record:
+        return {"player": None, "session": None, "report": None}
+
+    sessions = sessions_for_player(record.get("name") or "", limit=200)
+    if session_index is None:
+        target = sessions[-1] if sessions else (record.get("last_session") or None)
+        resolved_index = (len(sessions) - 1) if sessions else None
+    else:
+        if session_index < 0 or session_index >= len(sessions):
+            return {"player": None, "session": None, "report": None}
+        target = sessions[session_index]
+        resolved_index = session_index
+
+    if not isinstance(target, dict):
+        return {"player": None, "session": None, "report": None}
+
+    # SessionReviewer reads `net_result`; persisted sessions sometimes write
+    # `profit` instead. Normalize.
+    session_for_review = dict(target)
+    session_for_review["net_result"] = int(
+        session_for_review.get("net_result")
+        or session_for_review.get("profit", 0)
+        or 0
+    )
+
+    reviewer = SessionReviewer()
+    try:
+        report = reviewer.generate_session_report(session_for_review)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "player": {
+                "name": record.get("name"),
+                "skill_level": record.get("skill_level"),
+            },
+            "session": target,
+            "report": None,
+            "error": str(exc),
+        }
+
+    return {
+        "player": {
+            "name": record.get("name"),
+            "skill_level": record.get("skill_level"),
+        },
+        "session_index": resolved_index,
+        "session": target,
+        "report": report,
+    }

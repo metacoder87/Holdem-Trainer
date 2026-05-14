@@ -2,72 +2,139 @@
 
 Base URL: `http://localhost:8000`
 
+This documents the **implemented** REST + WebSocket surface as of the current
+main branch. Endpoints listed below are wired and reachable.
+
 ## Health
-- `GET /health`
-  - Response: `{ "status": "ok" }`
 
-## Dashboard Summary
-- `GET /api/summary?player={name}`
-  - Returns the active player, live metrics, training tracks, focus queue, and recent timeline.
-- `GET /api/charts/{metric}?player={name}`
-  - Returns recorded session trend points for metrics such as `vpip`, `pfr`, `decision_accuracy`, and `aggression_factor`.
-- `GET /api/summary/report?player={name}`
-  - Returns aggregate playing style, recommendations, performance metrics, and strategy score.
+- `GET /health` → `{ "status": "ok" }`
+- `GET /` → small service descriptor
 
-## Players And Bankroll
-- `GET /api/players`
-- `GET /api/players/{player_name}`
+## Summary (dashboard)
+
+- `GET /api/summary?player={name}` → `SummaryResponse` (live metrics, training
+  tracks, focus queue, timeline)
+- `GET /api/charts/{metric}?player={name}` → `[{ label, value }, ...]` for a
+  single metric across the player's recent sessions
+- `GET /api/summary/report?player={name}` → playing-style classification,
+  recommendations, strategy score
+
+> The chart and report endpoints currently live under the summary router; the
+> analytics router below exposes additional reports.
+
+## Players
+
+- `GET /api/players` → list of `{ name, bankroll, last_played, skill_level }`
+- `GET /api/players/{name}` → adds `sessions`, `last_session`
+
+## Bankroll
+
 - `GET /api/bankroll/players`
-- `POST /api/bankroll/players`
-  - Body: `{ "name": "Hero", "bankroll": 10000 }`
-- `PATCH /api/bankroll/players/{player_name}`
-  - Body: `{ "bankroll": 12000 }`
-- `GET /api/bankroll/summary`
+- `POST /api/bankroll/players` — body `{ name, bankroll }`
+- `PATCH /api/bankroll/players/{player_name}` — body `{ bankroll }`
+- `GET /api/bankroll/summary` → `{ total_players, total_bankroll, total_games_played }`
 
-## Game Sessions
-- `GET /api/games/modes`
-  - Returns supported game modes and default config.
-- `POST /api/games/sessions`
-  - Body: `{ "player_name": "Hero", "game_type": "cash", "limit_type": "no_limit", "opponents": 3 }`
-  - Response: `{ "id", "player_name", "game_type", "limit_type", "status", "config" }`
-- `GET /api/games/sessions/{session_id}`
-- `POST /api/games/sessions/{session_id}/hand/start`
-- `GET /api/games/sessions/{session_id}/hand`
-- `POST /api/games/sessions/{session_id}/hand/input`
-  - Body for menu inputs: `{ "choice": 1 }`
-  - Body for number/yes-no inputs: `{ "value": 120 }`
-- `POST /api/games/sessions/{session_id}/demo-hand`
+## Game sessions (live gameplay)
+
+The CLI engine is wrapped in a threaded session that surfaces blocking input
+prompts as `pending_input` payloads. Tournaments are auto-settled when the
+hero is eliminated or wins; the chip stack is converted back to cash.
+
+- `GET /api/games/modes` — registered cash + tournament modes
+- `POST /api/games/sessions` — body `SessionCreate` → `GameSession`
+- `GET /api/games/sessions/{session_id}` → `GameSession`
+- `POST /api/games/sessions/{session_id}/hand/start` → `GameHandState`
+- `GET /api/games/sessions/{session_id}/hand` → `GameHandState`
+- `POST /api/games/sessions/{session_id}/hand/input` — body
+  `{ choice?: int, value?: any }` (exactly one) → `GameHandState`
+- `POST /api/games/sessions/{session_id}/demo-hand` — auto-plays one hand to
+  completion (hero auto-checks/calls)
+
+`GameHandState`:
+
+```json
+{
+  "session_id": "abc",
+  "status": "in_hand | awaiting_input | hand_complete | game_over | error | idle",
+  "state": {
+    "game_state": "...", "community_cards": [...], "pot_size": 0,
+    "players": [...], "blinds": {...}, "hero_cards": [...], "hero_name": "...",
+    "hero_bankroll": 0, "hand_number": 0, "game_over_reason": null
+  },
+  "pending_input": { "kind": "menu|number|yes_no", "prompt": "...", "options": [...], "min_value": 0, "max_value": 0, "integer_only": false },
+  "input_error": null,
+  "last_hand": { ...HandHistory },
+  "terminal_reason": null,
+  "error": null
+}
+```
 
 ## Training
-- `GET /api/training/content`
-- `GET /api/training/quiz?player={name}&quiz_type=pot_odds`
-  - Returns a server-owned `quiz_id`, public question text, quiz type, and difficulty. Correct answers are not returned until evaluation.
-- `POST /api/training/quiz/evaluate`
-  - Body: `{ "quiz_id": "abc", "player": "Hero", "user_answer": 23, "tolerance": 0.05 }`
-  - Returns correctness, feedback, correct answer, explanation, and cumulative quiz stats for the player.
-- `GET /api/training/drill?player={name}&focus={weakness}`
-  - Returns a server-owned `drill_id`, targeted scenario, public quiz prompt, and curriculum metadata.
-- `POST /api/training/drill/evaluate`
-  - Body: `{ "drill_id": "abc", "player": "Hero", "user_answer": "call" }`
-  - Records the attempt and returns feedback, recommended actions, explanation, and updated progress.
-- `GET /api/training/progress?player={name}`
-  - Returns quiz/drill attempts, weakness history, mastery progress, and study recommendations. Pending quiz/drill answers are never returned.
 
-## Hand Histories And Replay
-- `GET /api/hands?player={name}&limit=50&reverse=true`
-- `GET /api/hands/{player_name}/{hand_number}`
-- `GET /api/hands/filter?player={name}&winner=hero&min_pot=100`
+All quiz/drill endpoints use **server-owned IDs**: the server keeps the
+correct answer privately on the player's `training_progress`, so clients
+never see it until after grading.
+
+- `GET /api/training/content` → tips, vocabulary, strategy guides, cheat sheets
+- `GET /api/training/quiz?quiz_type=...&player=...&pot_size=...&bet_to_call=...`
+  → `{ quiz_id, player, type, question, difficulty }`
+- `POST /api/training/quiz/evaluate` — body `{ quiz_id, player?, user_answer, tolerance? }`
+  → `QuizEvaluation` (and persists the attempt to `quiz_attempts`)
+- `GET /api/training/drill?player=...&focus=...` → `{ drill_id, focus_area, scenario, quiz, configuration, curriculum }`
+- `POST /api/training/drill/evaluate` — body `{ drill_id, player?, user_answer }`
+  → `DrillEvaluation` (and persists the attempt to `drill_attempts`)
+- `GET /api/training/progress?player=...` → quiz_attempts, drill_attempts,
+  weakness_history, mastery_progress, study_recommendations, quiz_stats,
+  drill_stats
 
 ## Analytics
-- `GET /api/stats/sessions?player={name}&limit=20`
-  - Returns recorded session rows from the active persistence layer.
-- `GET /api/charts/{metric}?player={name}`
-  - Supported metrics include `vpip`, `pfr`, `aggression_factor`, `decision_accuracy`, `quiz_accuracy`, `profit`, `hands_played`, and `winrate`.
+
+- `GET /api/stats/sessions?player={name}&limit=20` → recent session rows
+- `GET /api/analytics/career?player={name}` → CareerTracker aggregates +
+  milestones
+- `GET /api/analytics/sessions/latest?player={name}` → SessionReviewer report
+  for the most recent session
+- `GET /api/analytics/sessions/{idx}?player={name}` → SessionReviewer report
+  for a specific session index
+
+## Hand history
+
+- `GET /api/hands?player={name}&limit=50&reverse=true` → list of `HandHistory`
+- `GET /api/hands/filter?player={name}&winner=...&min_pot=...&street=...&decision_quality=...&weakness=...&session_id=...&game_type=...&limit=50`
+  → filtered list (note: `/filter` is declared before `/{name}/{n}` so it
+  resolves correctly)
+- `GET /api/hands/{player_name}/{hand_number}` → full `HandHistory`
 
 ## WebSocket
-- `WS /ws/{session_id}`
-  - Sends the same hand-state shape returned by `GET /api/games/sessions/{session_id}/hand` whenever state changes.
 
-## Persistence
-- JSON files are the local fallback for players, sessions, and hand histories.
-- Set `PYHOLDEM_DB_URL` to use PostgreSQL for persistent players, sessions, and hands.
+- `WS /ws/sessions/{session_id}`
+  - On connect the server sends an initial `GameHandState` snapshot.
+  - The server polls `_build_hand_response` on a short interval (env-tunable
+    via `PYHOLDEM_WS_POLL_INTERVAL`, default `0.1s`) and pushes a fresh
+    snapshot only when the relevant state changes (status, pending input,
+    last hand, terminal reason, error).
+  - Clients can send commands as JSON:
+    - `{ "action": "start" }` — start the next hand
+    - `{ "action": "input", "value": <int|string|bool> }` — answer the
+      pending prompt (or `"choice"` for menu options)
+    - `{ "action": "snapshot" }` — request a fresh snapshot immediately
+  - Errors are returned inline as `{ "error": "..." }`.
+  - Closes with code `4404` if the session id is unknown.
+
+## Environment
+
+- `PYHOLDEM_DATA_FILE` — JSON store path (default `data/players.json`)
+- `PYHOLDEM_DB_URL` or `DATABASE_URL` — opt-in PostgreSQL persistence
+- `PYHOLDEM_USE_DB` — set to `1`/`true` to also enable Postgres when only
+  `DATABASE_URL` is set
+- `PYHOLDEM_CORS_ORIGINS` — comma-separated allow-list (default
+  `http://localhost:5173,http://127.0.0.1:5173`)
+- `PYHOLDEM_SESSION_TTL_SECONDS` — idle session eviction (default `14400`)
+- `PYHOLDEM_WS_POLL_INTERVAL` — WS push poll interval seconds (default `0.1`)
+
+## Not yet implemented
+
+- Auth / guest tokens
+- DB-backed analytics aggregates / scheduled jobs
+- Hand history export endpoint (only list/filter/detail today)
+- `/ws/training/{player_name}` (training-only stream)

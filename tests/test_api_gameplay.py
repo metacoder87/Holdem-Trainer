@@ -135,7 +135,8 @@ def test_websocket_returns_session_state(client):
     )
     session_id = create.json()["id"]
 
-    with client.websocket_connect(f"/ws/{session_id}") as websocket:
+    # Route is /ws/sessions/{id}, not /ws/{id} (was a README/test typo)
+    with client.websocket_connect(f"/ws/sessions/{session_id}") as websocket:
         payload = websocket.receive_json()
 
     assert payload["session_id"] == session_id

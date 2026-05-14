@@ -211,7 +211,13 @@ export default function Session() {
             </Link>
           )}
           <div className="table-canvas">
-            <NeonTable liveState={gameState ?? null} heroName={gameState?.hero_name ?? null} />
+            <NeonTable
+              pot={gameState ? `$${gameState.pot_size?.toLocaleString?.() ?? gameState.pot_size ?? 0} POT` : undefined}
+              action={gameState?.game_state}
+              players={gameState?.players}
+              heroCards={gameState?.hero_cards}
+              communityCards={gameState?.community_cards}
+            />
           </div>
           <div className="hero-actions">
             <button
