@@ -6,26 +6,46 @@
 #
 # Then visit http://localhost:5173 in your browser. The frontend talks to the
 # API on http://localhost:8000.
+#
+# For observability (Prometheus + Grafana), layer in the overlay:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
+#
+# For load testing (k6 against the live stack):
+#
+#     docker compose -f docker-compose.yml -f docker-compose.load.yml run --rm k6 \
+#         run /scripts/smoke.js
 
 services:
   db:
     image: postgres:15-alpine
+    container_name: pyholdem-db
     restart: always
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=holdem_trainer
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: holdem_trainer
     ports:
       - "5435:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      
+    healthcheck:
+      # pg_isready waits for Postgres to accept TCP connections + auth.
+      # Backend's depends_on uses condition: service_healthy below to
+      # avoid the long-standing "race-vs-postgres" startup failure.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d holdem_trainer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
     image: pyholdem-pro-backend
     container_name: pyholdem-backend
+    restart: unless-stopped
     environment:
       PYHOLDEM_DATA_FILE: /data/players.json
       PYHOLDEM_CORS_ORIGINS: "http://localhost:5173,http://localhost"
@@ -33,18 +53,25 @@ services:
       PYHOLDEM_SESSION_TTL_SECONDS: "3600"
       PYTHONIOENCODING: utf-8
       PYHOLDEM_DB_URL: "postgresql://postgres:postgres@db:5432/holdem_trainer"
+      # Observability defaults to on; flip to "0" to opt out.
+      PYHOLDEM_METRICS_ENABLED: "1"
+      # CFR policy bundle - if set, the engine loads strategies from
+      # this directory at startup (mounted from a downloaded release
+      # asset; see docs/cfr-models.md).
+      PYHOLDEM_CFR_POLICY_DIR: /data/cfr
     ports:
       - "8000:8000"
     volumes:
       - pyholdem-data:/data
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 5s
+      start_period: 10s
 
   frontend:
     build:
@@ -55,11 +82,18 @@ services:
         VITE_WS_URL: ws://localhost:8000
     image: pyholdem-pro-frontend
     container_name: pyholdem-frontend
+    restart: unless-stopped
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "5173:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/ || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
 volumes:
   pyholdem-data:

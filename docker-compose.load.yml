@@ -1,0 +1,28 @@
+# Load-testing overlay - adds a `k6` runner service that talks to the
+# backend over the docker compose network.
+#
+# The k6 container has the load scripts mounted at /scripts. Use
+# `docker compose run --rm k6 run /scripts/<scenario>.js`.
+
+services:
+  k6:
+    image: grafana/k6:0.54.0
+    container_name: pyholdem-k6
+    profiles:
+      # Default profile - k6 only starts when explicitly invoked,
+      # not on `docker compose up`.
+      - load
+    environment:
+      BASE_URL: http://backend:8000
+      WS_URL: ws://backend:8000
+      K6_OUT: "json=/results/last_run.json"
+    volumes:
+      - ./scripts/load:/scripts:ro
+      - k6_results:/results
+    depends_on:
+      backend:
+        condition: service_healthy
+    entrypoint: ["k6"]
+
+volumes:
+  k6_results:

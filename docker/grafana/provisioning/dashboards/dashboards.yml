@@ -1,0 +1,16 @@
+# Grafana dashboard provisioning - mounts every JSON file under
+# /var/lib/grafana/dashboards as a non-editable dashboard.
+
+apiVersion: 1
+
+providers:
+  - name: pyholdem
+    orgId: 1
+    folder: PyHoldem
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
