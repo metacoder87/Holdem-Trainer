@@ -79,3 +79,12 @@ main_diff.patch
 main_untracked_*.txt
 *.codex-logs/
 .codex-logs/
+
+# CFR strategy files - large binary artifacts produced by cfr-models.yml
+# and distributed as GitHub Release Assets. Never commit to the repo.
+data/cfr/
+*.npz
+
+# k6 load-test results (ephemeral, written to a Docker volume)
+k6_results/
+scripts/load/results/
