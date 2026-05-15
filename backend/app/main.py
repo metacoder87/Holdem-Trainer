@@ -30,9 +30,9 @@ for stream_name in ("stdout", "stderr"):
 
 
 from app.api.router import api_router
+from app.observability import init_observability
 
 app = FastAPI(title="PyHoldem Pro API", version="0.1.0")
-
 
 
 app.add_middleware(
@@ -42,5 +42,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Observability must run *after* CORS so the OPTIONS preflight
+# doesn't get counted as traffic. Routes are still attached below.
+init_observability(app)
 
 app.include_router(api_router)
