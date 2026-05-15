@@ -1,5 +1,8 @@
 # Makefile for PyHoldem Pro
-.PHONY: help up up-detached down logs install dev-install test test-verbose test-coverage clean lint format run setup
+.PHONY: help up up-detached down logs install dev-install test test-verbose test-coverage clean lint format run setup \
+        up-obs up-load \
+        load-smoke load-read load-sessions load-ws load-spike load-analytics load-all \
+        cfr-train-kuhn cfr-train-leduc
 
 # Default target
 help:
@@ -28,11 +31,58 @@ up:
 up-detached:
 	docker compose up --build -d
 
+# Stack + Prometheus + Grafana (visit http://localhost:3000)
+up-obs:
+	docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
+
+# Stack with the k6 service available (use load-* targets to run scenarios)
+up-load:
+	docker compose -f docker-compose.yml -f docker-compose.load.yml up --build -d
+
 down:
-	docker compose down
+	docker compose -f docker-compose.yml \
+		-f docker-compose.observability.yml \
+		-f docker-compose.load.yml \
+		down
 
 logs:
 	docker compose logs -f
+
+# ----- Load testing (k6) -----
+# Each target runs one scenario against an already-running stack.
+# Run `make up-detached` first.
+
+LOAD_RUN = docker compose -f docker-compose.yml -f docker-compose.load.yml run --rm k6 run
+
+load-smoke:
+	$(LOAD_RUN) /scripts/smoke.js
+
+load-read:
+	$(LOAD_RUN) /scripts/read_heavy.js
+
+load-sessions:
+	$(LOAD_RUN) /scripts/game_session_lifecycle.js
+
+load-ws:
+	$(LOAD_RUN) /scripts/websocket_live.js
+
+load-spike:
+	$(LOAD_RUN) /scripts/spike.js
+
+load-analytics:
+	$(LOAD_RUN) /scripts/analytics.js
+
+load-all: load-smoke load-read load-sessions load-ws load-analytics load-spike
+
+# ----- CFR training (produces .npz strategy files) -----
+
+cfr-train-kuhn:
+	PYTHONPATH=src python -m cfr.cli train --game kuhn --solver cfr_plus \
+		--iterations 5000 --out data/cfr/kuhn.npz
+
+cfr-train-leduc:
+	PYTHONPATH=src python -m cfr.cli train --game leduc --solver cfr_plus \
+		--iterations 10000 --out data/cfr/leduc.npz
 
 # Setup development environment
 setup:

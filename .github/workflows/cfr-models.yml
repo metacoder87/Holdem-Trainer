@@ -1,0 +1,152 @@
+# PyHoldem Pro - CFR strategy training pipeline
+#
+# .npz strategy files are produced *out of band* and attached as
+# Release Assets (not committed to git). This workflow:
+#
+#   1. Trains every configured CFR scenario via the cfr.cli entry
+#      point (CFR+ by default, 5k-20k iterations depending on game).
+#   2. Uploads each resulting .npz as an artifact (always) AND as a
+#      Release Asset (only when a release tag is present).
+#
+# Triggers:
+#   workflow_dispatch     -> manual training run, choose iterations
+#   schedule              -> monthly retrain (kept fresh as code evolves)
+#   tag v*.*.*            -> attach freshly-trained strategies to the
+#                            release for that tag
+#
+# Backend images read these via PYHOLDEM_CFR_RELEASE_TAG at runtime:
+# the entrypoint downloads them once on container start. The .npz
+# files NEVER live in the repo.
+
+name: CFR Models
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations_kuhn:
+        description: "Kuhn CFR+ iterations"
+        required: false
+        default: "5000"
+        type: string
+      iterations_leduc:
+        description: "Leduc CFR+ iterations"
+        required: false
+        default: "10000"
+        type: string
+      iterations_nlhe_subgame:
+        description: "NLHE subgame CFR+ iterations (per scenario)"
+        required: false
+        default: "5000"
+        type: string
+      attach_to_release:
+        description: "Release tag to attach assets to (leave empty to skip upload)"
+        required: false
+        default: ""
+        type: string
+  schedule:
+    # 1st of each month at 03:00 UTC.
+    - cron: "0 3 1 * *"
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write   # required to upload Release Assets
+
+concurrency:
+  group: cfr-models-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: kuhn
+            game: kuhn
+            iters_input: iterations_kuhn
+            iters_default: "5000"
+            extra: ""
+          - name: leduc
+            game: leduc
+            iters_input: iterations_leduc
+            iters_default: "10000"
+            extra: ""
+          - name: nlhe_river_button_vs_bb_srp
+            game: nlhe_subgame
+            iters_input: iterations_nlhe_subgame
+            iters_default: "5000"
+            extra: "--pot 100 --stack 400 --buckets 10 --first-actor 1"
+          - name: nlhe_river_button_vs_bb_3bp
+            game: nlhe_subgame
+            iters_input: iterations_nlhe_subgame
+            iters_default: "5000"
+            extra: "--pot 200 --stack 800 --buckets 10 --first-actor 1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install training dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy
+          # The trainer also needs the engine (for EHS bucketing in
+          # NLHE subgames). Install the same backend reqs as runtime.
+          pip install -r requirements.txt -r backend/requirements.txt
+
+      - name: Resolve iterations
+        id: iters
+        run: |
+          INPUT_VAL='${{ github.event.inputs[matrix.iters_input] }}'
+          if [ -z "$INPUT_VAL" ]; then INPUT_VAL='${{ matrix.iters_default }}'; fi
+          echo "value=$INPUT_VAL" >> "$GITHUB_OUTPUT"
+
+      - name: Train ${{ matrix.name }}
+        env:
+          PYTHONPATH: src
+        run: |
+          mkdir -p out
+          python -m cfr.cli train \
+              --game ${{ matrix.game }} \
+              --solver cfr_plus \
+              --iterations ${{ steps.iters.outputs.value }} \
+              --out out/${{ matrix.name }}.npz \
+              ${{ matrix.extra }}
+
+      - name: Verify the saved policy loads + has > 0 infosets
+        env:
+          PYTHONPATH: src
+        run: |
+          python -c "
+          from cfr.io import load
+          p = load('out/${{ matrix.name }}.npz')
+          assert p.num_infosets() > 0, 'no infosets in policy'
+          print(f'${{ matrix.name }}: {p.num_infosets()} infosets')
+          "
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cfr-${{ matrix.name }}
+          path: out/${{ matrix.name }}.npz
+          retention-days: 90
+
+      # Attach to a GitHub Release only when:
+      #   - the trigger was a tag push (assets attach to that tag's release)
+      #   - or the user passed an explicit attach_to_release input
+      - name: Attach to Release
+        if: |
+          startsWith(github.ref, 'refs/tags/') ||
+          (github.event.inputs.attach_to_release != null && github.event.inputs.attach_to_release != '')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || github.event.inputs.attach_to_release }}
+          files: out/${{ matrix.name }}.npz
+          fail_on_unmatched_files: true
+          generate_release_notes: false
