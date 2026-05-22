@@ -5,9 +5,13 @@ from pydantic import BaseModel
 
 from app.services.game_service import (
     create_session,
+    delete_session,
     get_hand_state,
     get_session,
+    list_saved_sessions,
     list_modes,
+    pause_session,
+    resume_session,
     simulate_hand,
     start_hand,
     submit_input,
@@ -29,6 +33,10 @@ class SessionCreate(BaseModel):
     in_game_quizzes: Optional[bool] = None
     hud: Optional[bool] = None
     post_hand_feedback: Optional[bool] = None
+    # Villain selection. "balanced" (default) -> legacy mixed AI styles.
+    # "gto" -> GTOAIPlayer opponents that sample from the cached CFR
+    # policy. Unknown values are treated as "balanced".
+    villain_style: Optional[str] = None
 
 
 class HandInput(BaseModel):
@@ -39,6 +47,11 @@ class HandInput(BaseModel):
 @router.get("/games/modes")
 def game_modes():
     return list_modes()
+
+
+@router.get("/games/sessions")
+def game_sessions_list(player: Optional[str] = None, state: str = "active") -> list[dict]:
+    return list_saved_sessions(player, state)
 
 
 @router.post("/games/sessions")
@@ -56,6 +69,32 @@ def game_session_detail(session_id: str) -> dict:
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+@router.post("/games/sessions/{session_id}/pause")
+def game_session_pause(session_id: str) -> dict:
+    try:
+        return pause_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/games/sessions/{session_id}/resume")
+def game_session_resume(session_id: str) -> dict:
+    try:
+        return resume_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.delete("/games/sessions/{session_id}")
+def game_session_delete(session_id: str) -> dict:
+    try:
+        return delete_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
 
 
 @router.post("/games/sessions/{session_id}/hand/start")

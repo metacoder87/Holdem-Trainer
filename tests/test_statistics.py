@@ -242,6 +242,22 @@ class TestEquityCalculator:
         assert len(equities) == 3
         assert abs(sum(equities) - 1.0) < 0.01  # Should sum to 1
         assert equities[0] > equities[1] > equities[2]  # AA > KK > QQ
+
+    def test_calculate_equity_multiway_default_is_reproducible(self):
+        """Default multiway equity should not depend on process-global RNG state."""
+        calculator = EquityCalculator()
+
+        hands = [
+            [Card(Suit.HEARTS, Rank.ACE), Card(Suit.SPADES, Rank.ACE)],
+            [Card(Suit.HEARTS, Rank.KING), Card(Suit.SPADES, Rank.KING)],
+            [Card(Suit.HEARTS, Rank.QUEEN), Card(Suit.SPADES, Rank.QUEEN)],
+        ]
+
+        first = calculator.calculate_multiway_equity(hands)
+        second = calculator.calculate_multiway_equity(hands)
+
+        assert first == second
+        assert first[0] > first[1] > first[2]
         
     def test_calculate_equity_with_board(self):
         """Test equity calculation with known community cards."""

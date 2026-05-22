@@ -11,6 +11,7 @@ from app.api.routes import (
     hands,
     health,
     players,
+    poker,
     summary,
     training,
     ws,
@@ -25,4 +26,5 @@ api_router.include_router(bankroll.router, prefix="/api", tags=["bankroll"])
 api_router.include_router(games.router, prefix="/api", tags=["games"])
 api_router.include_router(hands.router, prefix="/api", tags=["hands"])
 api_router.include_router(analytics.router, prefix="/api", tags=["analytics"])
+api_router.include_router(poker.router, prefix="/api", tags=["poker"])
 api_router.include_router(ws.router, tags=["websockets"])

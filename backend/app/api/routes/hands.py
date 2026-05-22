@@ -61,9 +61,13 @@ def filter_hands(
 
 
 @router.get("/{player_name}/{hand_number}", response_model=dict)
-def get_hand_detail(player_name: str, hand_number: int) -> dict:
+def get_hand_detail(
+    player_name: str,
+    hand_number: int,
+    session_id: Optional[str] = Query(None, description="Disambiguate repeated hand numbers by session id"),
+) -> dict:
     """Retrieve a specific hand from a player's history."""
-    hand = get_hand(player_name, hand_number)
+    hand = get_hand(player_name, hand_number, session_id=session_id)
     if not hand:
         raise HTTPException(status_code=404, detail="Hand not found")
     return hand

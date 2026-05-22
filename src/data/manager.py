@@ -8,9 +8,27 @@ import os
 import re
 import threading
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Callable, Dict, List, Any, Optional
 from jsonschema import validate, ValidationError
 from data.schema import PLAYER_SCHEMA as PLAYER_SCHEMA_DEF
+
+
+_FILE_LOCKS: Dict[str, threading.RLock] = {}
+_FILE_LOCKS_LOCK = threading.Lock()
+
+
+def _normalized_path(path: str) -> str:
+    return os.path.abspath(os.path.expanduser(path))
+
+
+def _lock_for_file(path: str) -> threading.RLock:
+    key = _normalized_path(path)
+    with _FILE_LOCKS_LOCK:
+        lock = _FILE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _FILE_LOCKS[key] = lock
+        return lock
 
 
 def _resolve_db_url(explicit: Optional[str] = None) -> Optional[str]:
@@ -45,11 +63,15 @@ class DataManager:
             data_file: Path to the JSON data file
             hand_history_dir: Optional directory for per-player JSONL hand histories
         """
-        self.data_file = data_file
-        base_dir = os.path.dirname(os.path.abspath(data_file))
-        self.hand_history_dir = hand_history_dir or os.path.join(base_dir, "hand_histories")
+        self.data_file = _normalized_path(data_file)
+        base_dir = os.path.dirname(self.data_file)
+        self.hand_history_dir = (
+            _normalized_path(hand_history_dir)
+            if hand_history_dir
+            else os.path.join(base_dir, "hand_histories")
+        )
         self.players_data: Dict[str, Dict[str, Any]] = {}
-        self._lock = threading.RLock()  # Thread-safe operations
+        self._lock = _lock_for_file(self.data_file)
         self._db_url = _resolve_db_url(db_url)
         self._use_db = bool(self._db_url)
         self._db = None
@@ -65,6 +87,46 @@ class DataManager:
         
         # Load existing data
         self.load_players()
+
+    def _load_players_unlocked(self):
+        if not os.path.exists(self.data_file):
+            self.players_data = {}
+            return
+
+        try:
+            with open(self.data_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            if isinstance(data, dict):
+                if isinstance(data.get("players"), dict):
+                    self.players_data = data["players"]
+                else:
+                    self.players_data = data
+            else:
+                self.players_data = {}
+        except json.JSONDecodeError:
+            raise
+        except Exception:
+            # If file is corrupted or temporarily unreadable, preserve the
+            # historical fallback behavior and start from an empty data set.
+            self.players_data = {}
+
+    def _save_players_unlocked(self):
+        os.makedirs(os.path.dirname(self.data_file), exist_ok=True)
+        temp_file = f"{self.data_file}.{os.getpid()}.{threading.get_ident()}.tmp"
+        try:
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(self.players_data, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_file, self.data_file)
+        except Exception:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            finally:
+                raise
 
     def _hand_history_path_for_player(self, name: str) -> str:
         normalized = (name or "").strip()
@@ -213,6 +275,7 @@ class DataManager:
         name = name.strip()
         
         with self._lock:
+            self._load_players_unlocked()
             if name in self.players_data:
                 raise ValueError(f"Player '{name}' already exists")
             
@@ -234,6 +297,7 @@ class DataManager:
             self.validate_player_data(player_data)
             
             self.players_data[name] = player_data
+            self._save_players_unlocked()
             return player_data.copy()
     
     def get_player(self, name: str) -> Optional[Dict[str, Any]]:
@@ -250,6 +314,7 @@ class DataManager:
             return self._db.get_player(name)
 
         with self._lock:
+            self._load_players_unlocked()
             if not name or name.strip() not in self.players_data:
                 return None
             return self.players_data[name.strip()].copy()
@@ -268,6 +333,7 @@ class DataManager:
             return self._db.player_exists(name)
 
         with self._lock:
+            self._load_players_unlocked()
             return name.strip() in self.players_data if name else False
     
     def update_player_bankroll(self, name: str, new_bankroll: int):
@@ -288,11 +354,13 @@ class DataManager:
             raise ValueError("Bankroll cannot be negative")
         
         with self._lock:
+            self._load_players_unlocked()
             if name not in self.players_data:
                 raise ValueError(f"Player '{name}' not found")
             
             self.players_data[name]["bankroll"] = int(new_bankroll)
             self.players_data[name]["last_played"] = datetime.now().isoformat()
+            self._save_players_unlocked()
     
     def update_player_stats(self, name: str, stats: Dict[str, Any]):
         """
@@ -309,6 +377,7 @@ class DataManager:
             return self._db.update_player_stats(name, stats)
 
         with self._lock:
+            self._load_players_unlocked()
             if name not in self.players_data:
                 raise ValueError(f"Player '{name}' not found")
             
@@ -317,6 +386,26 @@ class DataManager:
                 self.players_data[name][key] = value
             
             self.players_data[name]["last_played"] = datetime.now().isoformat()
+            self._save_players_unlocked()
+
+    def update_player_record(self, name: str, mutator: Callable[[Dict[str, Any]], Any]) -> Any:
+        """Reload, mutate, and save one player record under the shared file lock."""
+        if self._use_db:
+            player = self.get_player(name)
+            if not player:
+                raise ValueError(f"Player '{name}' not found")
+            result = mutator(player)
+            self.update_player_stats(name, player)
+            return result
+
+        with self._lock:
+            self._load_players_unlocked()
+            if name not in self.players_data:
+                raise ValueError(f"Player '{name}' not found")
+            result = mutator(self.players_data[name])
+            self.players_data[name]["last_played"] = datetime.now().isoformat()
+            self._save_players_unlocked()
+            return result
     
     def save_player(self, player):
         """
@@ -343,8 +432,6 @@ class DataManager:
 
         # Update the player's bankroll
         self.update_player_bankroll(player.name, player.bankroll)
-        # Save to file
-        self.save_players()
     
     def delete_player(self, name: str):
         """
@@ -360,10 +447,12 @@ class DataManager:
             return self._db.delete_player(name)
 
         with self._lock:
+            self._load_players_unlocked()
             if name not in self.players_data:
                 raise ValueError(f"Player '{name}' not found")
             
             del self.players_data[name]
+            self._save_players_unlocked()
     
     def list_players(self, sort_by: str = "name", reverse: bool = False) -> List[Dict[str, Any]]:
         """
@@ -380,6 +469,7 @@ class DataManager:
             return self._db.list_players(sort_by=sort_by, reverse=reverse)
 
         with self._lock:
+            self._load_players_unlocked()
             players = list(self.players_data.values())
             
             if sort_by and players:
@@ -402,25 +492,7 @@ class DataManager:
             return self._db.save_players()
 
         with self._lock:
-            try:
-                # Create backup before saving
-                if os.path.exists(self.data_file):
-                    backup_file = f"{self.data_file}.bak"
-                    if os.path.exists(backup_file):
-                        os.remove(backup_file)
-                    os.replace(self.data_file, backup_file)
-                
-                # Save to file
-                with open(self.data_file, 'w', encoding='utf-8') as f:
-                    json.dump(self.players_data, f, indent=2, ensure_ascii=False)
-                    
-            except (IOError, OSError, PermissionError) as e:
-                # Restore backup if save failed
-                backup_file = f"{self.data_file}.bak"
-                if os.path.exists(backup_file):
-                    os.replace(backup_file, self.data_file)
-                # Re-raise the original exception
-                raise
+            self._save_players_unlocked()
     
     def load_players(self):
         """
@@ -433,31 +505,7 @@ class DataManager:
             return self._db.load_players()
 
         with self._lock:
-            if not os.path.exists(self.data_file):
-                # Create empty data structure
-                self.players_data = {}
-                return
-            
-            try:
-                with open(self.data_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                # Handle different file formats
-                if isinstance(data, dict):
-                    if "players" in data:
-                        # New format with metadata
-                        self.players_data = data["players"]
-                    else:
-                        # Direct player data
-                        self.players_data = data
-                else:
-                    self.players_data = {}
-                    
-            except json.JSONDecodeError:
-                raise
-            except Exception:
-                # If file is corrupted, start fresh
-                self.players_data = {}
+            self._load_players_unlocked()
     
     def backup_players_data(self, backup_file: str):
         """
@@ -470,6 +518,7 @@ class DataManager:
             return self._db.backup_players_data(backup_file)
 
         with self._lock:
+            self._load_players_unlocked()
             with open(backup_file, 'w', encoding='utf-8') as f:
                 json.dump(self.players_data, f, indent=2, ensure_ascii=False)
     
@@ -490,6 +539,7 @@ class DataManager:
             try:
                 with open(backup_file, 'r', encoding='utf-8') as f:
                     self.players_data = json.load(f)
+                self._save_players_unlocked()
             except Exception as e:
                 raise IOError(f"Failed to restore from backup: {e}")
     
@@ -529,6 +579,7 @@ class DataManager:
             return self._db.get_player_statistics(name)
 
         with self._lock:
+            self._load_players_unlocked()
             player = self.players_data.get(name)
             if not player:
                 return {}
@@ -592,6 +643,7 @@ class DataManager:
         removed_count = 0
         
         with self._lock:
+            self._load_players_unlocked()
             players_to_remove = []
             
             for name, player_data in self.players_data.items():
@@ -606,6 +658,8 @@ class DataManager:
             for name in players_to_remove:
                 del self.players_data[name]
                 removed_count += 1
+            if removed_count:
+                self._save_players_unlocked()
         
         return removed_count
     
@@ -621,6 +675,7 @@ class DataManager:
             return self._db.export_data(export_file, format=format)
 
         with self._lock:
+            self._load_players_unlocked()
             if format.lower() == "json":
                 with open(export_file, 'w', encoding='utf-8') as f:
                     json.dump(self.players_data, f, indent=2, ensure_ascii=False)
@@ -655,6 +710,7 @@ class DataManager:
         payload.setdefault("hands_played", 0)
 
         with self._lock:
+            self._load_players_unlocked()
             player = self.players_data.get(player_name)
             if player is None:
                 player = {
@@ -694,7 +750,7 @@ class DataManager:
             player["last_session"] = payload
             player["last_played"] = now
             player["games_played"] = len(sessions)
-            self.save_players()
+            self._save_players_unlocked()
 
     def update_session(self, session_id: str, updates: Dict[str, Any]) -> None:
         """
@@ -713,6 +769,7 @@ class DataManager:
         now = datetime.now().isoformat()
 
         with self._lock:
+            self._load_players_unlocked()
             players = [self.players_data.get(player_name)] if player_name else list(self.players_data.values())
             for player in players:
                 if not isinstance(player, dict):
@@ -751,13 +808,35 @@ class DataManager:
                     player["bankroll"] = int(merged.get("bankroll_end") or player.get("bankroll", 0))
                 if "biggest_pot" in merged:
                     player["biggest_pot"] = max(int(player.get("biggest_pot", 0) or 0), int(merged.get("biggest_pot", 0) or 0))
-                self.save_players()
+                self._save_players_unlocked()
                 return
+
+    def get_session_by_id(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Return one persisted session by ID, regardless of player."""
+        if self._use_db and self._db:
+            return self._db.get_session_by_id(session_id)
+
+        if not session_id:
+            return None
+
+        with self._lock:
+            self._load_players_unlocked()
+            for player in self.players_data.values():
+                if not isinstance(player, dict):
+                    continue
+                sessions = player.get("sessions") or []
+                if not isinstance(sessions, list):
+                    continue
+                for session in sessions:
+                    if isinstance(session, dict) and session.get("id") == session_id:
+                        return dict(session)
+        return None
 
     def get_sessions(self, player_name: str, limit: int = 50) -> List[Dict[str, Any]]:
         if self._use_db and self._db:
             return self._db.get_sessions(player_name, limit)
         with self._lock:
+            self._load_players_unlocked()
             player = self.players_data.get(player_name)
             if not isinstance(player, dict):
                 return []
@@ -859,6 +938,7 @@ class DataManager:
             return self._db.get_data_summary()
 
         with self._lock:
+            self._load_players_unlocked()
             total_players = len(self.players_data)
             total_bankroll = sum(p.get("bankroll", 0) for p in self.players_data.values())
             total_games = sum(p.get("games_played", 0) for p in self.players_data.values())

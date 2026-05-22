@@ -26,7 +26,6 @@ def list_players() -> List[Dict[str, Any]]:
 def update_bankroll(player_name: str, bankroll: int) -> Dict[str, Any]:
     manager = _manager()
     manager.update_player_bankroll(player_name, int(bankroll))
-    manager.save_players()
     player = manager.get_player(player_name) or {}
     return {
         "name": player.get("name", player_name),
@@ -39,7 +38,6 @@ def update_bankroll(player_name: str, bankroll: int) -> Dict[str, Any]:
 def create_player(player_name: str, bankroll: int) -> Dict[str, Any]:
     manager = _manager()
     player = manager.create_player(player_name, bankroll)
-    manager.save_players()
     return {
         "name": player.get("name"),
         "bankroll": player.get("bankroll"),

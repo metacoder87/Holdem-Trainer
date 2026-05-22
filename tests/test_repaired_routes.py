@@ -161,6 +161,80 @@ def test_analytics_session_latest_returns_report(client, tmp_path):
     assert "overall_grade" in payload["report"]
 
 
+def test_analytics_ev_leaks_handles_empty_player(client):
+    response = client.get("/api/analytics/ev-leaks?player=Nobody")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["priced_decision_count"] == 0
+    assert payload["groups"] == []
+
+
+def test_analytics_ev_leaks_groups_priced_mistakes(client, tmp_path):
+    manager = DataManager(data_file=str(tmp_path / "players.json"))
+    manager.create_player("LeakUser", 10000)
+    manager.append_hand_history(
+        "LeakUser",
+        {
+            "session_id": "s1",
+            "hand_number": 1,
+            "decision_points": [
+                {
+                    "betting_round": "turn",
+                    "hero_position": 2,
+                    "chosen_action": "call",
+                    "recommended_action": "fold",
+                    "opponent": {"type": "loose-aggressive"},
+                    "ev_loss_bb": 2.5,
+                    "ev_loss_chips": 25,
+                },
+                {
+                    "betting_round": "river",
+                    "hero_position": 4,
+                    "chosen_action": "fold",
+                    "recommended_action": "fold",
+                    "opponent": {"type": "balanced"},
+                    "ev_loss_bb": 0,
+                    "ev_loss_chips": 0,
+                },
+                {
+                    "betting_round": "flop",
+                    "chosen_action": "check",
+                    "recommended_action": "check",
+                    "ev_loss_bb": None,
+                },
+            ],
+        },
+    )
+    manager.append_hand_history(
+        "LeakUser",
+        {
+            "session_id": "s2",
+            "hand_number": 2,
+            "decision_points": [
+                {
+                    "betting_round": "turn",
+                    "hero_position": 2,
+                    "chosen_action": "call",
+                    "recommended_action": "fold",
+                    "opponent": {"type": "loose-aggressive"},
+                    "ev_loss_bb": 1.5,
+                    "ev_loss_chips": 15,
+                }
+            ],
+        },
+    )
+
+    response = client.get("/api/analytics/ev-leaks?player=LeakUser&limit=5")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["priced_decision_count"] == 3
+    assert payload["mistake_count"] == 2
+    assert payload["total_ev_loss_bb"] == 4.0
+    assert payload["worst_group"]["street"] == "turn"
+    assert payload["worst_group"]["decision_count"] == 2
+    assert payload["groups"][0]["total_ev_loss_bb"] == 4.0
+
+
 # ----- /api/games/sessions all-in regression --------------------------------
 
 

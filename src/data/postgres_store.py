@@ -202,6 +202,27 @@ class PostgresStore:
                 elif "cash_out" in updates:
                     row.cash_out = _safe_int(updates["cash_out"])
 
+    def get_session_by_id(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self._session_scope() as session:
+            row = session.get(GameSession, session_id)
+            if not row:
+                return None
+            data = dict(row.data or {})
+            data.update(
+                {
+                    "id": row.id,
+                    "player_name": row.player_name,
+                    "game_type": row.game_type,
+                    "limit_type": row.limit_type,
+                    "created_at": row.created_at.isoformat() if row.created_at else data.get("created_at"),
+                    "ended_at": row.ended_at.isoformat() if row.ended_at else data.get("ended_at"),
+                    "hands_played": row.hands_played,
+                    "buy_in": row.buy_in,
+                    "cash_out": row.cash_out,
+                }
+            )
+            return data
+
     def get_sessions(self, player_name: str, limit: int = 50) -> List[Dict[str, Any]]:
         with self._session_scope() as session:
             stmt = select(GameSession).where(GameSession.player_name == player_name).order_by(GameSession.created_at.desc()).limit(limit)

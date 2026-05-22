@@ -36,6 +36,25 @@ TOPIC_LABELS = {
     "value_betting": "Value targets",
 }
 
+TOPIC_FOCUS_IDS = {
+    "starting_hands": "too_loose",
+    "preflop_hand_selection": "too_loose",
+    "position_awareness": "poor_position_play",
+    "betting_for_value": "too_passive",
+    "aggression": "too_passive",
+    "bet_sizing": "poor_bet_sizing",
+    "pot_odds_calculation": "poor_pot_odds",
+    "drawing_hands": "poor_pot_odds",
+    "value_betting": "too_passive",
+}
+
+FALLBACK_FOCUS_ITEMS = [
+    {"id": "poor_position_play", "label": "Position-based range review"},
+    {"id": "poor_bet_sizing", "label": "Bet sizing calibration"},
+    {"id": "too_passive", "label": "Turn barrel frequency"},
+    {"id": "too_aggressive", "label": "River bluff selectivity"},
+]
+
 
 def build_summary(player_name: Optional[str] = None) -> Dict[str, Any]:
     record = _load_player_record(player_name)
@@ -77,7 +96,8 @@ def build_summary(player_name: Optional[str] = None) -> Dict[str, Any]:
     ]
 
     training_tracks = _build_training_tracks(record, last_session)
-    focus_queue = _build_focus_queue(record)
+    focus_queue_items = _build_focus_queue_items(record)
+    focus_queue = [item["label"] for item in focus_queue_items]
     timeline = _build_timeline(record)
 
     return {
@@ -89,6 +109,7 @@ def build_summary(player_name: Optional[str] = None) -> Dict[str, Any]:
         "live_metrics": live_metrics,
         "training_tracks": training_tracks,
         "focus_queue": focus_queue,
+        "focus_queue_items": focus_queue_items,
         "timeline": timeline,
     }
 
@@ -127,11 +148,19 @@ def _get_manager() -> DataManager:
 
 
 def _load_player_record(player_name: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Look up a player record.
+
+    Bug fix (matches analytics_service.load_player_record): when
+    ``player_name`` is explicitly provided but doesn't match any
+    persisted player, return ``None``. The previous silent fallback to
+    the most-recently-played player caused the dashboard (`/api/summary`)
+    to render Player A's stats under Player B's name when the caller
+    asked for a player who hadn't played yet. Only the implicit
+    "no player specified" case keeps the most-recent fallback.
+    """
     manager = _get_manager()
     if player_name:
-        record = manager.get_player(player_name)
-        if record:
-            return record
+        return manager.get_player(player_name) or None
     players = manager.list_players(sort_by="last_played", reverse=True)
     return players[0] if players else None
 
@@ -205,41 +234,58 @@ def _build_training_tracks(record: Dict[str, Any], last_session: Dict[str, Any])
 
 
 def _build_focus_queue(record: Dict[str, Any]) -> List[str]:
-    items: List[str] = []
+    return [item["label"] for item in _build_focus_queue_items(record)]
+
+
+def _build_focus_queue_items(record: Dict[str, Any]) -> List[Dict[str, Optional[str]]]:
+    items: List[Dict[str, Optional[str]]] = []
     weaknesses = record.get("weaknesses") or []
     topics = record.get("recommended_topics") or []
 
     for weakness in weaknesses:
-        label = WEAKNESS_LABELS.get(str(weakness).lower())
+        focus_id = str(weakness).lower()
+        label = WEAKNESS_LABELS.get(focus_id)
         if label:
-            items.append(label)
+            items.append({"id": focus_id, "label": label})
 
     for topic in topics:
-        label = TOPIC_LABELS.get(str(topic).lower())
+        topic_id = str(topic).lower()
+        label = TOPIC_LABELS.get(topic_id)
         if label:
-            items.append(label)
+            items.append({"id": TOPIC_FOCUS_IDS.get(topic_id), "label": label})
 
     if not items:
-        items = [
-            "Position-based range review",
-            "Bet sizing calibration",
-            "Turn barrel frequency",
-            "River bluff selectivity",
-        ]
+        items = list(FALLBACK_FOCUS_ITEMS)
 
-    return _dedupe(items)[:4]
+    return _dedupe_focus_items(items)[:4]
 
 
 def _build_timeline(record: Dict[str, Any]) -> List[Dict[str, Any]]:
     recent_hands = record.get("recent_hands") or []
+    if not recent_hands and record.get("name"):
+        try:
+            recent_hands = _get_manager().load_hand_history(str(record["name"]), limit=3, reverse=False)
+        except Exception:
+            recent_hands = []
+
     timeline: List[Dict[str, Any]] = []
     for hand in recent_hands[-3:]:
-        started_at = hand.get("started_at", "")
+        started_at = hand.get("started_at") or hand.get("saved_at") or ""
         time_label = _format_time(started_at)
         hand_number = hand.get("hand_number", "?")
-        meta = hand.get("meta", {})
+        meta = hand.get("meta") if isinstance(hand.get("meta"), dict) else {}
         hero_won = meta.get("hero_won")
-        result = "Won pot" if hero_won else "Lost pot"
+        if hero_won is True:
+            result = "Won pot"
+        elif hero_won is False:
+            result = "Lost pot"
+        elif hand.get("winner"):
+            result = f"Winner: {hand.get('winner')}"
+        else:
+            result = "Hand saved"
+        pot_total = hand.get("pot_total") or (meta.get("pot_total") if isinstance(meta, dict) else None)
+        if pot_total:
+            result = f"{result} (${int(float(pot_total))})"
         timeline.append(
             {
                 "time": time_label,
@@ -307,6 +353,18 @@ def _dedupe(items: List[str]) -> List[str]:
     return unique
 
 
+def _dedupe_focus_items(items: List[Dict[str, Optional[str]]]) -> List[Dict[str, Optional[str]]]:
+    seen = set()
+    unique: List[Dict[str, Optional[str]]] = []
+    for item in items:
+        label = str(item.get("label") or "")
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        unique.append({"id": item.get("id"), "label": label})
+    return unique
+
+
 def _format_time(timestamp: str) -> str:
     if not timestamp:
         return "00:00"
@@ -361,6 +419,7 @@ def _default_summary() -> Dict[str, Any]:
             "Turn barrel frequency",
             "River bluff selectivity",
         ],
+        "focus_queue_items": list(FALLBACK_FOCUS_ITEMS),
         "timeline": [
             {"time": "00:00", "label": "Session start", "detail": "No recent hands yet"},
         ],

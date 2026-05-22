@@ -32,9 +32,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.config import settings
 from app.services.game_service import (
-    SESSIONS,
-    SESSIONS_LOCK,
     _build_hand_response,
+    _get_live_session_or_restore,
     start_hand,
     submit_input,
 )
@@ -51,12 +50,15 @@ def _snapshot_signature(payload: Dict[str, Any]) -> str:
     pending = payload.get("pending_input") or {}
     last_hand = payload.get("last_hand") or {}
     state = payload.get("state") or {}
+    live_coach = payload.get("live_coach") or {}
     digest = {
         "status": payload.get("status"),
         "terminal_reason": payload.get("terminal_reason"),
         "pending_kind": pending.get("kind"),
         "pending_prompt": pending.get("prompt"),
         "pending_options": pending.get("options"),
+        "coach_action": live_coach.get("recommended_action"),
+        "coach_summary": live_coach.get("summary"),
         "last_hand_number": last_hand.get("hand_number"),
         "game_state": state.get("game_state"),
         "pot_size": state.get("pot_size"),
@@ -69,8 +71,7 @@ def _snapshot_signature(payload: Dict[str, Any]) -> str:
 
 @router.websocket("/ws/sessions/{session_id}")
 async def session_stream(websocket: WebSocket, session_id: str) -> None:
-    with SESSIONS_LOCK:
-        session = SESSIONS.get(session_id)
+    session = _get_live_session_or_restore(session_id)
     if not session:
         await websocket.close(code=4404)
         return

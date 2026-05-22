@@ -1,4 +1,5 @@
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ def test_summary_defaults_without_players(client):
     payload = response.json()
     assert "player" in payload
     assert "live_metrics" in payload
+    assert payload["focus_queue_items"][0]["id"] == "poor_position_play"
 
 
 def test_bankroll_create_list_update_flow(client):
@@ -80,13 +82,52 @@ def test_training_drill_endpoint(client):
     assert "quiz" in payload
     assert "drill_id" in payload
     assert "correct_answer" not in payload["quiz"]
+    assert "open-ended straight draw" in payload["quiz"]["question"]
+    assert str(payload["scenario"]["pot_size"]) in payload["quiz"]["question"]
+    assert str(payload["scenario"]["bet_to_call"]) in payload["quiz"]["question"]
 
     result = client.post(
         "/api/training/drill/evaluate",
-        json={"drill_id": payload["drill_id"], "player": payload["player"], "user_answer": payload["quiz"].get("type") == "pot_odds" and "no" or "fold"},
+        json={"drill_id": payload["drill_id"], "player": payload["player"], "user_answer": "fold"},
     )
     assert result.status_code == 200
-    assert "progress" in result.json()
+    assert result.json()["correct"] is True
+    assert "straight draw" in result.json()["explanation"] or "outs" in result.json()["explanation"]
+
+
+def test_training_drill_payload_uses_coherent_scenario_values(client):
+    response = client.get("/api/training/drill?player=ScenarioUser&focus=poor_pot_odds")
+
+    assert response.status_code == 200
+    payload = response.json()
+    scenario = payload["scenario"]
+    quiz = payload["quiz"]
+    assert "pot" not in quiz
+    assert "bet" not in quiz
+    assert f"${scenario['pot_size']}" in quiz["question"]
+    assert f"${scenario['bet_to_call']}" in quiz["question"]
+    assert str(scenario["outs"]) in quiz["question"]
+
+
+def test_concurrent_training_drill_requests_do_not_lose_json_progress(client, tmp_path, monkeypatch):
+    data_file = tmp_path / "players.json"
+    monkeypatch.setenv("PYHOLDEM_DATA_FILE", str(data_file))
+    attempts = 12
+
+    def request_drill(index: int) -> str:
+        response = client.get(
+            f"/api/training/drill?player=ConcurrentUser&focus=poor_pot_odds&n={index}"
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["drill_id"]
+
+    with ThreadPoolExecutor(max_workers=attempts) as executor:
+        drill_ids = list(executor.map(request_drill, range(attempts)))
+
+    assert len(set(drill_ids)) == attempts
+    record = DataManager(data_file=str(data_file)).get_player("ConcurrentUser")
+    pending = record["training_progress"]["pending_drills"]
+    assert set(drill_ids).issubset(set(pending))
 
 
 def test_training_progress_endpoint(client):
@@ -155,3 +196,63 @@ def test_hand_history_endpoints(client, tmp_path, monkeypatch):
     filtered = client.get("/api/hands/filter?player=HistoryUser&winner=hero&min_pot=100")
     assert filtered.status_code == 200
     assert [hand["hand_number"] for hand in filtered.json()] == [1]
+
+
+def test_hand_detail_disambiguates_duplicate_hand_numbers_by_session(client, tmp_path, monkeypatch):
+    data_file = tmp_path / "players.json"
+    monkeypatch.setenv("PYHOLDEM_DATA_FILE", str(data_file))
+    manager = DataManager(data_file=str(data_file))
+    manager.create_player("ReplayUser", 5000)
+    manager.append_hand_history(
+        "ReplayUser",
+        {
+            "session_id": "old-session",
+            "hand_number": 1,
+            "hero_hole_cards": ["Ah", "Kd"],
+            "pot_total": 100,
+            "winners": ["ReplayUser"],
+        },
+    )
+    manager.append_hand_history(
+        "ReplayUser",
+        {
+            "session_id": "new-session",
+            "hand_number": 1,
+            "hero_hole_cards": ["2h", "2d"],
+            "pot_total": 250,
+            "winners": ["Villain"],
+        },
+    )
+
+    unqualified = client.get("/api/hands/ReplayUser/1")
+    assert unqualified.status_code == 200
+    assert unqualified.json()["session_id"] == "new-session"
+
+    qualified = client.get("/api/hands/ReplayUser/1?session_id=old-session")
+    assert qualified.status_code == 200
+    assert qualified.json()["session_id"] == "old-session"
+
+
+def test_summary_timeline_uses_saved_hand_history_when_recent_hands_empty(client, tmp_path, monkeypatch):
+    data_file = tmp_path / "players.json"
+    monkeypatch.setenv("PYHOLDEM_DATA_FILE", str(data_file))
+    manager = DataManager(data_file=str(data_file))
+    manager.create_player("TimelineUser", 5000)
+    manager.save_players()
+    manager.append_hand_history(
+        "TimelineUser",
+        {
+            "hand_number": 7,
+            "started_at": "2026-05-14T18:30:00",
+            "pot_total": 240,
+            "winners": ["TimelineUser"],
+            "meta": {"hero_won": True, "pot_total": 240},
+        },
+    )
+
+    response = client.get("/api/summary?player=TimelineUser")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["timeline"][0]["label"] == "Hand 7"
+    assert "Won pot" in payload["timeline"][0]["detail"]

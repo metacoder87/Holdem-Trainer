@@ -98,13 +98,30 @@ def _apply_filters(
         yield record
 
 
-def get_hand(player_name: str, hand_number: int) -> Optional[Dict[str, Any]]:
+def _hand_session_id(hand: Dict[str, Any]) -> Optional[str]:
+    meta = hand.get("meta") if isinstance(hand.get("meta"), dict) else {}
+    value = hand.get("session_id") or meta.get("session_id")
+    return str(value) if value else None
+
+
+def get_hand(
+    player_name: str,
+    hand_number: int,
+    *,
+    session_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     if hand_number <= 0:
         return None
-    hands = list_hands(player_name, limit=200, reverse=False)
+    # Hand numbers are scoped to a game engine/session, not globally unique
+    # for a player. Newest-first preserves the historical route while making
+    # unqualified lookups prefer the hand the user most recently played.
+    hands = list_hands(player_name, limit=500, reverse=True)
     for hand in hands:
-        if int(hand.get("hand_number", 0) or 0) == int(hand_number):
-            return hand
+        if int(hand.get("hand_number", 0) or 0) != int(hand_number):
+            continue
+        if session_id and _hand_session_id(hand) != str(session_id):
+            continue
+        return hand
     return None
 
 
