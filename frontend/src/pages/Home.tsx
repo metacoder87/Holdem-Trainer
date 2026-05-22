@@ -1,9 +1,13 @@
 import { Link, useOutletContext } from "react-router-dom";
+import type { FocusQueueItem } from "../api/client";
 import type { ShellContext } from "../components/Shell";
 import NeonTable from "../components/NeonTable";
 
 export default function Home() {
   const { summary } = useOutletContext<ShellContext>();
+  const focusItems: FocusQueueItem[] = summary.focus_queue_items?.length
+    ? summary.focus_queue_items
+    : summary.focus_queue.map((label) => ({ label }));
 
   return (
     <>
@@ -103,8 +107,19 @@ export default function Home() {
             <p>Next up from your recorded leaks and study recommendations.</p>
           </div>
           <ul className="focus-list">
-            {summary.focus_queue.length > 0 ? summary.focus_queue.map((item) => (
-              <li key={item}>{item}</li>
+            {focusItems.length > 0 ? focusItems.map((item) => (
+              <li className="focus-link-row" key={`${item.id ?? "label"}-${item.label}`}>
+                <span>{item.label}</span>
+                {item.id && (
+                  <Link
+                    className="inline-focus-link"
+                    to={`/training/drill?focus=${encodeURIComponent(item.id)}`}
+                    aria-label={`Practice ${item.label}`}
+                  >
+                    Drill
+                  </Link>
+                )}
+              </li>
             )) : <li>No focus items yet.</li>}
           </ul>
           <Link className="btn primary" to="/training/drill">

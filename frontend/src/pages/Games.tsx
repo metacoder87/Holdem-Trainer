@@ -1,25 +1,37 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import {
+  ApiError,
   createGameSession,
+  deleteGameSession,
+  getSavedGameSessions,
   getGameModes,
   getGameSession,
   getGameHandState,
+  pauseGameSession,
+  resumeGameSession,
   startGameHand,
   type JsonValue,
   type GameHandState,
   type GameMode,
+  type SavedGameSession,
   type GameSession
 } from "../api/client";
 import type { ShellContext } from "../components/Shell";
+
+function isStaleSessionError(error: unknown) {
+  return error instanceof ApiError && (error.status === 404 || error.status === 410);
+}
 
 export default function Games() {
   const { activePlayer } = useOutletContext<ShellContext>();
   const navigate = useNavigate();
   const [modes, setModes] = useState<GameMode[]>([]);
+  const [savedSessions, setSavedSessions] = useState<SavedGameSession[]>([]);
   const [session, setSession] = useState<GameSession | null>(null);
   const [handState, setHandState] = useState<GameHandState | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [staleSessionNotice, setStaleSessionNotice] = useState<string | null>(null);
   const [tournamentLimitType, setTournamentLimitType] = useState("no_limit");
   const [loadingMode, setLoadingMode] = useState<string | null>(null);
   const [trainingConfig, setTrainingConfig] = useState({
@@ -35,15 +47,60 @@ export default function Games() {
       .catch((err) => setStatus(err.message || "Failed to load game modes"));
   }, []);
 
+  const refreshSavedSessions = async () => {
+    try {
+      const rows = await getSavedGameSessions(activePlayer || undefined, "active");
+      setSavedSessions(rows);
+    } catch {
+      setSavedSessions([]);
+    }
+  };
+
+  useEffect(() => {
+    refreshSavedSessions();
+  }, [activePlayer]);
+
   useEffect(() => {
     const sessionId = localStorage.getItem("ph_session_id");
     if (!sessionId) return;
+    let cancelled = false;
+
+    const clearStaleSession = () => {
+      localStorage.removeItem("ph_session_id");
+      if (cancelled) return;
+      setSession(null);
+      setHandState(null);
+      setStatus(null);
+      setStaleSessionNotice("Your previous session is no longer available. Start a new session to continue.");
+    };
+
     getGameSession(sessionId)
-      .then((data) => setSession(data))
-      .catch((err) => setStatus(err.message || "Failed to load existing session"));
-    getGameHandState(sessionId)
-      .then((data) => setHandState(data))
-      .catch(() => null);
+      .then(async (data) => {
+        if (cancelled) return;
+        setSession(data);
+        setStaleSessionNotice(null);
+        try {
+          const handData = await getGameHandState(sessionId);
+          if (!cancelled) setHandState(handData);
+        } catch (err) {
+          if (isStaleSessionError(err)) {
+            clearStaleSession();
+          }
+        }
+      })
+      .catch((err) => {
+        if (isStaleSessionError(err)) {
+          clearStaleSession();
+          return;
+        }
+        if (!cancelled) {
+          setStatus(err instanceof Error ? err.message : "Failed to load existing session");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const resolveLimitType = (mode: GameMode) => {
@@ -71,7 +128,9 @@ export default function Games() {
       setSession(newSession);
       localStorage.setItem("ph_session_id", newSession.id);
       setHandState(null);
+      setStaleSessionNotice(null);
       setStatus(`Session ${newSession.id} created.`);
+      refreshSavedSessions();
       return newSession;
     } catch (err) {
       if (err instanceof Error) {
@@ -103,9 +162,52 @@ export default function Games() {
       setStatus("Hand started. Continue in Live Session.");
       navigate("/session");
     } catch (err) {
-      if (err instanceof Error) {
+      if (isStaleSessionError(err)) {
+        localStorage.removeItem("ph_session_id");
+        setSession(null);
+        setHandState(null);
+        setStaleSessionNotice("Your previous session is no longer available. Start a new session to continue.");
+        setStatus(null);
+      } else if (err instanceof Error) {
         setStatus(err.message);
       }
+    }
+  };
+
+  const handleResumeSaved = async (saved: SavedGameSession) => {
+    if (!saved.id) return;
+    localStorage.setItem("ph_session_id", saved.id);
+    setStatus("Resuming saved session...");
+    try {
+      await resumeGameSession(saved.id);
+    } catch {
+      // The Session page will still request and hydrate the latest state.
+    }
+    navigate("/session");
+  };
+
+  const handlePauseSaved = async (saved: SavedGameSession) => {
+    if (!saved.id) return;
+    try {
+      await pauseGameSession(saved.id);
+      await refreshSavedSessions();
+      setStatus(`Session ${saved.id} paused.`);
+    } catch (err) {
+      if (err instanceof Error) setStatus(err.message);
+    }
+  };
+
+  const handleDeleteSaved = async (saved: SavedGameSession) => {
+    if (!saved.id) return;
+    try {
+      await deleteGameSession(saved.id);
+      if (localStorage.getItem("ph_session_id") === saved.id) {
+        localStorage.removeItem("ph_session_id");
+      }
+      await refreshSavedSessions();
+      setStatus(`Session ${saved.id} deleted.`);
+    } catch (err) {
+      if (err instanceof Error) setStatus(err.message);
     }
   };
 
@@ -217,6 +319,47 @@ export default function Games() {
         </div>
       </section>
 
+      <section className="section">
+        <div className="panel">
+          <div className="panel-header">
+            <h2>Saved Sessions</h2>
+            <p>Resume tournaments and cash games from persisted backend snapshots.</p>
+          </div>
+          {savedSessions.length > 0 ? (
+            <div className="session-list">
+              {savedSessions.map((saved) => (
+                <div className="session-list-row" key={saved.id}>
+                  <div>
+                    <div className="module-label">{saved.game_type || "game"} · {saved.status || "active"}</div>
+                    <strong>{saved.id}</strong>
+                    <p>
+                      {saved.hands_played ?? 0} hands
+                      {typeof saved.hero_stack === "number" ? ` · Stack $${saved.hero_stack.toLocaleString()}` : ""}
+                    </p>
+                  </div>
+                  <div className="module-actions">
+                    <button className="btn primary" type="button" onClick={() => handleResumeSaved(saved)}>
+                      Resume
+                    </button>
+                    <button className="btn ghost" type="button" onClick={() => handlePauseSaved(saved)}>
+                      Pause
+                    </button>
+                    <button className="btn ghost" type="button" onClick={() => handleDeleteSaved(saved)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="chart-placeholder">
+              <div className="chart-grid" />
+              <div className="chart-label">No saved active sessions for this profile.</div>
+            </div>
+          )}
+        </div>
+      </section>
+
       <section className="section split">
         <div className="panel">
           <div className="panel-header">
@@ -253,6 +396,12 @@ export default function Games() {
                 <div className="form-status">Session ended: {terminalReason.replace(/_/g, " ")}.</div>
               )}
             </>
+          )}
+          {!session && staleSessionNotice && (
+            <div className="chart-placeholder">
+              <div className="chart-grid" />
+              <div className="chart-label">{staleSessionNotice}</div>
+            </div>
           )}
           {status && <div className="form-status">{status}</div>}
         </div>

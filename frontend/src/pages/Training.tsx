@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import type { ShellContext } from "../components/Shell";
+import ProgressionPanel from "../components/ProgressionPanel";
 import {
   evaluateTrainingQuiz,
   getPlayers,
   getTrainingContent,
   getTrainingProgress,
   getTrainingQuiz,
+  type FocusQueueItem,
   type PlayerSummary,
   type QuizEvaluation,
   type TrainingContent,
@@ -33,8 +35,12 @@ export default function Training() {
   }, [player]);
 
   useEffect(() => {
+    setStatus(null);
     getTrainingContent()
-      .then((data) => setContent(data))
+      .then((data) => {
+        setContent(data);
+        setStatus(null);
+      })
       .catch((err) => setStatus(err.message || "Failed to load training content"));
     getPlayers()
       .then(setPlayers)
@@ -46,9 +52,12 @@ export default function Training() {
   }, [refreshProgress]);
 
   const tips = useMemo(() => content?.tips?.slice(0, 4) ?? [], [content]);
-  const focusItems = summary.focus_queue.length
-    ? summary.focus_queue
-    : progress?.study_recommendations?.slice(0, 4) ?? [];
+  const focusItems: FocusQueueItem[] = useMemo(() => {
+    if (summary.focus_queue_items?.length) return summary.focus_queue_items;
+    if (summary.focus_queue.length) return summary.focus_queue.map((label) => ({ label }));
+    return (progress?.study_recommendations?.slice(0, 4) ?? []).map((label) => ({ label }));
+  }, [progress?.study_recommendations, summary.focus_queue, summary.focus_queue_items]);
+  const primaryFocus = focusItems.find((item) => item.id)?.id;
 
   const handleQuiz = async () => {
     try {
@@ -139,12 +148,28 @@ export default function Training() {
           </div>
           <ul className="focus-list">
             {focusItems.length > 0 ? (
-              focusItems.map((item) => <li key={item}>{item}</li>)
+              focusItems.map((item) => (
+                <li className="focus-link-row" key={`${item.id ?? "label"}-${item.label}`}>
+                  <span>{item.label}</span>
+                  {item.id && (
+                    <Link
+                      className="inline-focus-link"
+                      to={`/training/drill?focus=${encodeURIComponent(item.id)}`}
+                      aria-label={`Practice ${item.label}`}
+                    >
+                      Drill
+                    </Link>
+                  )}
+                </li>
+              ))
             ) : (
               <li>No focus items yet. Complete a quiz or drill to start a plan.</li>
             )}
           </ul>
-          <Link className="btn primary" to="/training/drill">
+          <Link
+            className="btn primary"
+            to={primaryFocus ? `/training/drill?focus=${encodeURIComponent(primaryFocus)}` : "/training/drill"}
+          >
             Start Guided Drill
           </Link>
         </div>
@@ -213,6 +238,13 @@ export default function Training() {
             {status && <div className="form-status">{status}</div>}
           </div>
         </div>
+      </section>
+
+      {/* Track-4 adaptive progression dashboard. Sits above the
+          static coach library so it's the first thing users see
+          when they hit the training page. */}
+      <section className="section">
+        <ProgressionPanel player={activePlayer || summary.player.name} />
       </section>
 
       <section className="section">

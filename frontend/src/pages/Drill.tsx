@@ -1,17 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useOutletContext } from "react-router-dom";
+import { Link, useOutletContext, useSearchParams } from "react-router-dom";
 import type { ShellContext } from "../components/Shell";
 import {
   evaluateTrainingDrill,
   getTrainingDrill,
   getTrainingProgress,
+  postDrillFromDecision,
   type DrillEvaluation,
+  type FocusQueueItem,
   type TrainingDrill,
   type TrainingProgress
 } from "../api/client";
 
 export default function Drill() {
-  const { summary, activePlayer } = useOutletContext<ShellContext>();
+  const { summary, activePlayer, refreshSummary } = useOutletContext<ShellContext>();
+  const [searchParams] = useSearchParams();
+  const requestedFocus = searchParams.get("focus") || undefined;
+  // Track 3: drill seeded from a specific historical decision.
+  const fromDecisionHand = searchParams.get("from_decision_hand");
+  const fromDecisionIdx = searchParams.get("from_decision_idx");
   const player = activePlayer || summary.player.name || "Guest";
   const [drill, setDrill] = useState<TrainingDrill | null>(null);
   const [progress, setProgress] = useState<TrainingProgress | null>(null);
@@ -20,7 +27,43 @@ export default function Drill() {
   const [status, setStatus] = useState<string | null>(null);
 
   const loadDrill = useCallback(() => {
-    getTrainingDrill(player)
+    // When the route carries (from_decision_hand, from_decision_idx)
+    // we seed the drill from that exact historical decision rather
+    // than asking the trainer for a generic weakness-focused one.
+    if (fromDecisionHand && fromDecisionIdx) {
+      const handNumber = Number(fromDecisionHand);
+      const decisionIndex = Number(fromDecisionIdx);
+      if (
+        Number.isFinite(handNumber) &&
+        Number.isFinite(decisionIndex) &&
+        player
+      ) {
+        postDrillFromDecision({
+          player,
+          hand_number: handNumber,
+          decision_index: decisionIndex,
+        })
+          .then((response) => {
+            if (response.drill) {
+              // Backend returns a richer payload than TrainingDrill;
+              // cast through unknown so TS accepts the shape overlap.
+              setDrill(response.drill as unknown as TrainingDrill);
+              setAnswer("");
+              setEvaluation(null);
+              setStatus(null);
+            } else {
+              setStatus(
+                response.error || "Could not seed a drill from that decision."
+              );
+            }
+          })
+          .catch((err) => {
+            setStatus(err instanceof Error ? err.message : "Failed to seed drill.");
+          });
+        return;
+      }
+    }
+    getTrainingDrill(player, requestedFocus)
       .then((data) => {
         setDrill(data);
         setAnswer("");
@@ -30,7 +73,7 @@ export default function Drill() {
       .catch((err) => {
         setStatus(err instanceof Error ? err.message : "Failed to load drill.");
       });
-  }, [player]);
+  }, [player, requestedFocus, fromDecisionHand, fromDecisionIdx]);
 
   const refreshProgress = useCallback(() => {
     getTrainingProgress(player)
@@ -53,6 +96,7 @@ export default function Drill() {
       setEvaluation(result);
       setStatus(null);
       refreshProgress();
+      refreshSummary?.();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Failed to submit drill.");
     }
@@ -60,6 +104,11 @@ export default function Drill() {
 
   const scenario = drill?.scenario ?? {};
   const mastery = drill ? progress?.mastery_progress?.[drill.focus_area] : undefined;
+  const focusCards: FocusQueueItem[] = summary.focus_queue_items?.length
+    ? summary.focus_queue_items
+    : (summary.focus_queue.length ? summary.focus_queue : progress?.study_recommendations ?? [])
+        .slice(0, 4)
+        .map((label) => ({ label }));
 
   return (
     <>
@@ -75,11 +124,16 @@ export default function Drill() {
         </div>
         {status && <div className="form-status">{status}</div>}
         <div className="card-grid">
-          {(summary.focus_queue.length ? summary.focus_queue : progress?.study_recommendations ?? []).slice(0, 4).map((item) => (
-            <div key={item} className="panel module-card">
+          {focusCards.map((item) => (
+            <div key={`${item.id ?? "label"}-${item.label}`} className="panel module-card">
               <div className="module-label">Focus</div>
-              <h3>{item}</h3>
+              <h3>{item.label}</h3>
               <p>Practice results update this profile's training progress.</p>
+              {item.id && (
+                <Link className="inline-focus-link" to={`/training/drill?focus=${encodeURIComponent(item.id)}`}>
+                  Practice this focus
+                </Link>
+              )}
             </div>
           ))}
         </div>

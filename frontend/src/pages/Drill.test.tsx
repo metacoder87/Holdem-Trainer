@@ -10,9 +10,11 @@ const shellContext = vi.hoisted(() => ({
     live_metrics: [],
     training_tracks: [],
     focus_queue: ["Pot odds speed drills"],
+    focus_queue_items: [{ id: "poor_pot_odds", label: "Pot odds speed drills" }],
     timeline: []
   },
-  activePlayer: "Hero"
+  activePlayer: "Hero",
+  refreshSummary: vi.fn()
 }));
 
 vi.mock("react-router-dom", async () => {
@@ -100,5 +102,21 @@ describe("Drill page", () => {
       expect(evaluateTrainingDrill).toHaveBeenCalledWith("drill-1", "call", "Hero");
       expect(screen.getByText("calculate pot odds")).toBeInTheDocument();
     });
+  });
+
+  it("requests the drill focus from the query string", async () => {
+    render(
+      <MemoryRouter initialEntries={["/training/drill?focus=poor_pot_odds"]}>
+        <Drill />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(getTrainingDrill).toHaveBeenCalledWith("Hero", "poor_pot_odds");
+    });
+    expect(await screen.findByText("Practice this focus")).toHaveAttribute(
+      "href",
+      "/training/drill?focus=poor_pot_odds"
+    );
   });
 });

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ReplayDetail from "./ReplayDetail";
@@ -10,6 +10,7 @@ const shellContext = vi.hoisted(() => ({
     live_metrics: [],
     training_tracks: [],
     focus_queue: [],
+    focus_queue_items: [],
     timeline: []
   },
   activePlayer: "Hero"
@@ -53,12 +54,13 @@ describe("ReplayDetail page", () => {
 
   it("surfaces decision reasoning and equity details", async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/replay/7?session=session-7"]}>
         <ReplayDetail />
       </MemoryRouter>
     );
 
     expect(await screen.findByText("call vs fold")).toBeInTheDocument();
+    await waitFor(() => expect(getHandDetail).toHaveBeenCalledWith("Hero", 7, "session-7"));
     expect(screen.getByText(/equity 12.0%/)).toBeInTheDocument();
     expect(screen.getByText("Equity is below the required threshold.")).toBeInTheDocument();
   });

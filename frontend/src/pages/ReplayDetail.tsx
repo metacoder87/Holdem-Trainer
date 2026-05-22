@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
-import { Link, useOutletContext, useParams } from "react-router-dom";
+import { Link, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import type { ShellContext } from "../components/Shell";
 import { getHandDetail, type HandHistory } from "../api/client";
 
 export default function ReplayDetail() {
   const { summary, activePlayer } = useOutletContext<ShellContext>();
   const { handNumber } = useParams();
+  const [searchParams] = useSearchParams();
   const [hand, setHand] = useState<HandHistory | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
   const player = activePlayer || summary.player.name;
   const parsedHandNumber = Number(handNumber);
+  const sessionId = searchParams.get("session") || undefined;
   const winningHandSummary = hand?.winning_hands
     ?.map((winningHand) => `${winningHand.player}: ${winningHand.rank ?? "Winning hand"}${winningHand.cards?.length ? ` (${winningHand.cards.join(" ")})` : ""}`)
     .join("; ");
@@ -26,7 +28,7 @@ export default function ReplayDetail() {
       return;
     }
 
-    getHandDetail(player, parsedHandNumber)
+    getHandDetail(player, parsedHandNumber, sessionId)
       .then((data) => {
         setHand(data);
         setStatus(null);
@@ -35,7 +37,7 @@ export default function ReplayDetail() {
         setHand(null);
         setStatus(err instanceof Error ? err.message : "Failed to load hand.");
       });
-  }, [parsedHandNumber, player]);
+  }, [parsedHandNumber, player, sessionId]);
 
   return (
     <>

@@ -3,6 +3,42 @@ import { Link, useOutletContext } from "react-router-dom";
 import type { ShellContext } from "../components/Shell";
 import { getFilteredHands, getHandHistory, type HandHistory } from "../api/client";
 
+function replayPath(hand: HandHistory, fallbackIndex: number) {
+  const handNumber = hand.hand_number ?? fallbackIndex + 1;
+  const metaSessionId = hand.meta?.session_id;
+  const sessionId = hand.session_id || (typeof metaSessionId === "string" ? metaSessionId : undefined);
+  const query = sessionId ? `?session=${encodeURIComponent(sessionId)}` : "";
+  return `/replay/${handNumber}${query}`;
+}
+
+/**
+ * Find the largest priced EV loss in the hand and return its
+ * (hand_number, decision_index) so we can seed a "practice this
+ * spot" drill from it. Returns null when no priced decision shows
+ * a leak.
+ */
+function biggestLeakLink(hand: HandHistory): {
+  handNumber: number;
+  decisionIndex: number;
+  evLossBb: number;
+} | null {
+  const decisions = hand.decision_points ?? [];
+  if (!Array.isArray(decisions) || decisions.length === 0) return null;
+  let worstIdx = -1;
+  let worstLoss = 0;
+  decisions.forEach((d, i) => {
+    const loss = typeof d.ev_loss_bb === "number" ? d.ev_loss_bb : 0;
+    if (loss > worstLoss) {
+      worstLoss = loss;
+      worstIdx = i;
+    }
+  });
+  if (worstIdx < 0 || worstLoss <= 0) return null;
+  const handNumber = hand.hand_number;
+  if (typeof handNumber !== "number") return null;
+  return { handNumber, decisionIndex: worstIdx, evLossBb: worstLoss };
+}
+
 export default function Replay() {
   const { summary, activePlayer } = useOutletContext<ShellContext>();
   const [hands, setHands] = useState<HandHistory[]>([]);
@@ -52,21 +88,37 @@ export default function Replay() {
         {activePlayer || summary.player.name ? (
           <div className="card-grid">
             {hands.length > 0 ? (
-              hands.map((hand, index) => (
-                <div key={hand.hand_number ?? index} className="panel module-card">
-                  <div className="module-label">Hand {hand.hand_number ?? "-"}</div>
-                  <h3>{hand.hero_hole_cards?.join(" ") || "Unknown cards"}</h3>
-                  <p>Board: {hand.board?.join(" ") || "No board yet"}</p>
-                  <div className="module-footer">
-                    <span className="module-intensity">
-                      Pot ${hand.pot_total ?? 0}
-                    </span>
-                    <Link className="btn ghost" to={`/replay/${hand.hand_number ?? index + 1}`}>
-                      Open Hand
-                    </Link>
+              hands.map((hand, index) => {
+                const leak = biggestLeakLink(hand);
+                return (
+                  <div key={hand.hand_number ?? index} className="panel module-card">
+                    <div className="module-label">Hand {hand.hand_number ?? "-"}</div>
+                    <h3>{hand.hero_hole_cards?.join(" ") || "Unknown cards"}</h3>
+                    <p>Board: {hand.board?.join(" ") || "No board yet"}</p>
+                    <div className="module-footer">
+                      <span className="module-intensity">
+                        Pot ${hand.pot_total ?? 0}
+                      </span>
+                      <Link className="btn ghost" to={replayPath(hand, index)}>
+                        Open Hand
+                      </Link>
+                    </div>
+                    {leak && (
+                      <div className="practice-leak">
+                        <span className="muted small">
+                          Biggest leak: {leak.evLossBb.toFixed(2)} BB
+                        </span>
+                        <Link
+                          className="inline-focus-link"
+                          to={`/training/drill?from_decision_hand=${leak.handNumber}&from_decision_idx=${leak.decisionIndex}`}
+                        >
+                          Practice this spot
+                        </Link>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <div className="panel module-card">
                 <div className="module-label">No hands</div>

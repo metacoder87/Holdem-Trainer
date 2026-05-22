@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import Training from "./Training";
 import {
   evaluateTrainingQuiz,
+  getAdaptiveProgression,
   getPlayers,
   getTrainingContent,
   getTrainingProgress,
@@ -16,6 +17,7 @@ const shellContext = vi.hoisted(() => ({
     live_metrics: [],
     training_tracks: [],
     focus_queue: ["Pot odds speed drills"],
+    focus_queue_items: [{ id: "poor_pot_odds", label: "Pot odds speed drills" }],
     timeline: []
   },
   activePlayer: "Hero",
@@ -35,7 +37,11 @@ vi.mock("../api/client", () => ({
   getPlayers: vi.fn(),
   getTrainingContent: vi.fn(),
   getTrainingProgress: vi.fn(),
-  getTrainingQuiz: vi.fn()
+  getTrainingQuiz: vi.fn(),
+  // Track 4: adaptive progression endpoints. Default to empty
+  // payloads so existing assertions still pass.
+  getAdaptiveProgression: vi.fn(),
+  postSrsReview: vi.fn(),
 }));
 
 describe("Training page", () => {
@@ -47,6 +53,13 @@ describe("Training page", () => {
       cheat_sheets: {}
     });
     vi.mocked(getPlayers).mockResolvedValue([]);
+    vi.mocked(getAdaptiveProgression).mockResolvedValue({
+      player: "Hero",
+      bandit: [],
+      next_topic: null,
+      srs: { total_cards: 0, due_count: 0, due_card_ids: [] },
+      elo: { player_rating: 1500, attempts: 0, tracked_scenarios: 0 },
+    });
     vi.mocked(getTrainingProgress).mockResolvedValue({
       player: "Hero",
       quiz_attempts: [],
@@ -91,5 +104,22 @@ describe("Training page", () => {
       expect(evaluateTrainingQuiz).toHaveBeenCalledWith("quiz-1", 19, "Hero", 0.05);
       expect(screen.getByText(/Server explanation/)).toBeInTheDocument();
     });
+  });
+
+  it("links focus queue items to targeted drills", async () => {
+    render(
+      <MemoryRouter>
+        <Training />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole("link", { name: "Practice Pot odds speed drills" })).toHaveAttribute(
+      "href",
+      "/training/drill?focus=poor_pot_odds"
+    );
+    expect(screen.getByRole("link", { name: "Start Guided Drill" })).toHaveAttribute(
+      "href",
+      "/training/drill?focus=poor_pot_odds"
+    );
   });
 });
