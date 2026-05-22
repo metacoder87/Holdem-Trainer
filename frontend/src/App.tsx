@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { getHealth, getSummary, SummaryResponse } from "./api/client";
 import Shell from "./components/Shell";
@@ -14,6 +14,7 @@ const Drill = lazy(() => import("./pages/Drill"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Bankroll = lazy(() => import("./pages/Bankroll"));
 const Games = lazy(() => import("./pages/Games"));
+const Learn = lazy(() => import("./pages/Learn"));
 
 function PageBoundary({ children }: { children: ReactNode }) {
   return <Suspense fallback={<div className="page-loading">Loading...</div>}>{children}</Suspense>;
@@ -33,6 +34,7 @@ const emptySummary: SummaryResponse = {
   ],
   training_tracks: [],
   focus_queue: [],
+  focus_queue_items: [],
   timeline: []
 };
 
@@ -57,6 +59,14 @@ export default function App() {
     return () => {
       active = false;
     };
+  }, []);
+
+  const refreshSummary = useCallback(async () => {
+    const value = await getSummary(activePlayer || undefined);
+    setSummary(value);
+    if (!activePlayer && value.player?.name) {
+      setActivePlayer(value.player.name);
+    }
   }, [activePlayer]);
 
   useEffect(() => {
@@ -89,6 +99,7 @@ export default function App() {
               apiStatus={apiStatus}
               activePlayer={activePlayer}
               setActivePlayer={setActivePlayer}
+              refreshSummary={refreshSummary}
             />
           }
         >
@@ -97,6 +108,7 @@ export default function App() {
           <Route path="table" element={<PageBoundary><Table /></PageBoundary>} />
           <Route path="training" element={<PageBoundary><Training /></PageBoundary>} />
           <Route path="training/drill" element={<PageBoundary><Drill /></PageBoundary>} />
+          <Route path="learn" element={<PageBoundary><Learn /></PageBoundary>} />
           <Route path="analytics" element={<PageBoundary><Analytics /></PageBoundary>} />
           <Route path="replay" element={<PageBoundary><Replay /></PageBoundary>} />
           <Route path="replay/:handNumber" element={<PageBoundary><ReplayDetail /></PageBoundary>} />

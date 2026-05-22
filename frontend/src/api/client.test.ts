@@ -3,6 +3,7 @@ import {
   ApiError,
   evaluateTrainingDrill,
   evaluateTrainingQuiz,
+  getEvLeakReport,
   getHandDetail,
   getSummary,
   getTrainingDrill
@@ -37,6 +38,22 @@ describe("API client", () => {
     await getHandDetail("Jon Doe", 7);
     const url = fetchMock.mock.calls[0][0] as string;
     expect(url).toContain("/api/hands/Jon%20Doe/7");
+  });
+
+  it("adds session_id when fetching a session-qualified hand detail", async () => {
+    mockJson({ hand_number: 7, session_id: "session-7" });
+    await getHandDetail("Jon Doe", 7, "session-7");
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("/api/hands/Jon%20Doe/7?session_id=session-7");
+  });
+
+  it("builds the EV leak report query", async () => {
+    mockJson({ priced_decision_count: 0, mistake_count: 0, total_ev_loss_bb: 0, total_ev_loss_chips: 0, groups: [] });
+    await getEvLeakReport("Jon Doe", 12);
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("/api/analytics/ev-leaks?");
+    expect(url).toContain("limit=12");
+    expect(url).toContain("player=Jon+Doe");
   });
 
   it("builds the drill query string from player + focus", async () => {
@@ -114,7 +131,9 @@ describe("API client", () => {
     mockJson({ detail: "Session not found" }, 404);
     await expect(getHandDetail("Nobody", 99)).rejects.toMatchObject({
       name: "ApiError",
-      status: 404
+      status: 404,
+      message: "Session not found",
+      body: "{\"detail\":\"Session not found\"}"
     });
   });
 

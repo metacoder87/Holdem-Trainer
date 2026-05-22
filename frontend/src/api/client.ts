@@ -47,6 +47,11 @@ export type TimelineEntry = {
   detail: string;
 };
 
+export type FocusQueueItem = {
+  id?: string | null;
+  label: string;
+};
+
 export type SummaryResponse = {
   player: {
     name: string;
@@ -56,6 +61,7 @@ export type SummaryResponse = {
   live_metrics: Metric[];
   training_tracks: TrainingTrack[];
   focus_queue: string[];
+  focus_queue_items?: FocusQueueItem[];
   timeline: TimelineEntry[];
 };
 
@@ -178,6 +184,19 @@ export type GameSession = {
   config: Record<string, JsonValue>;
 };
 
+export type SavedGameSession = {
+  id: string;
+  player_name?: string;
+  game_type?: string;
+  limit_type?: string;
+  status?: string;
+  terminal_reason?: string | null;
+  updated_at?: number | string | null;
+  hands_played?: number;
+  hero_stack?: number | null;
+  last_hand?: HandHistory | null;
+};
+
 export type WinningHand = {
   player: string;
   rank?: string | null;
@@ -186,6 +205,7 @@ export type WinningHand = {
 };
 
 export type HandHistory = {
+  session_id?: string;
   hand_number?: number;
   started_at?: string;
   hero_hole_cards?: string[];
@@ -212,8 +232,22 @@ export type HandHistory = {
     quality?: string;
     equity?: number;
     required_equity?: number;
+    chosen_ev_chips?: number | null;
+    best_ev_chips?: number | null;
+    ev_loss_chips?: number | null;
+    ev_loss_bb?: number | null;
+    ev_method?: string | null;
     outs?: Record<string, JsonValue>;
     analysis?: Record<string, JsonValue>;
+    // Track 3 fields surfaced for the per-decision audit table.
+    pot_total?: number;
+    to_call?: number;
+    hero_stack?: number;
+    hero_position?: number;
+    spr?: number;
+    spr_bucket?: number;
+    board?: string[];
+    hero_hole_cards?: string[];
   }>;
   meta?: Record<string, JsonValue>;
   board_by_street?: Record<string, string[]>;
@@ -232,9 +266,38 @@ export type HandHistory = {
       equity?: number;
       required_equity?: number;
       line?: string;
+      gto?: GtoAdvice | null;
     } | null;
     decision_count?: number;
+    // Top-level GTO summary mirrors worst_decision.gto when present
+    // so the UI can render the comparison without drilling.
+    gto_summary?: GtoSummary | null;
   } | null;
+};
+
+// Per-decision GTO advice payload from backend/app/services/gto_advisor.py.
+// Present only when the cached CFR cache covered this spot.
+export type GtoAdvice = {
+  gto_action: string;
+  gto_frequency: number;
+  hero_action?: string | null;
+  hero_frequency?: number | null;
+  ev_delta_bb?: number | null;
+  action_breakdown?: Record<string, number>;
+  source: string;
+  spot_signature: string;
+  iterations?: number | null;
+};
+
+// Trimmed copy of GtoAdvice that the coach_notes panel renders directly.
+export type GtoSummary = {
+  gto_action?: string | null;
+  gto_frequency?: number | null;
+  hero_action?: string | null;
+  hero_frequency?: number | null;
+  ev_delta_bb?: number | null;
+  action_breakdown?: Record<string, number> | null;
+  spot_signature?: string | null;
 };
 
 export type HudOpponent = {
@@ -255,6 +318,37 @@ export type PendingInput = {
   integer_only?: boolean | null;
 };
 
+export type LiveCoach = {
+  recommended_action: string;
+  confidence: number;
+  summary: string;
+  math: {
+    pot: number;
+    to_call: number;
+    pot_odds?: number | null;
+    required_equity?: number | null;
+    estimated_equity?: number | null;
+    equity_edge?: number | null;
+    hand_strength?: number | null;
+    hand_potential?: number | null;
+    outs?: Record<string, JsonValue>;
+    spr?: number | null;
+    effective_stack?: number | null;
+  };
+  opponent?: {
+    name?: string | null;
+    type: string;
+    hands: number;
+    vpip: number;
+    pfr: number;
+    aggression_factor: number;
+  } | null;
+  rationale: string[];
+  warnings: string[];
+  history_signals: string[];
+  training_link?: string | null;
+};
+
 export type LiveGameState = {
   game_state: string;
   community_cards: string[];
@@ -265,11 +359,22 @@ export type LiveGameState = {
     current_bet: number;
     folded: boolean;
     all_in: boolean;
+    position?: number;
+    // Seat-role markers (Track 3 UX). Optional so legacy responses
+    // without them still typecheck.
+    is_dealer?: boolean;
+    is_small_blind?: boolean;
+    is_big_blind?: boolean;
+    is_hero?: boolean;
   }>;
+  next_to_act?: string | null;
   blinds?: {
     small_blind?: number;
     big_blind?: number;
     blind_level?: number | null;
+    dealer_name?: string | null;
+    small_blind_player?: string | null;
+    big_blind_player?: string | null;
   };
   hero_cards?: string[];
   hero_name?: string;
@@ -294,6 +399,7 @@ export type GameHandState = {
   status: string;
   state: LiveGameState;
   pending_input?: PendingInput | null;
+  live_coach?: LiveCoach | null;
   input_error?: string | null;
   last_hand?: HandHistory | null;
   terminal_reason?: string | null;
@@ -307,6 +413,22 @@ type RequestOptions = Omit<RequestInit, "body"> & {
   body?: JsonValue;
 };
 
+function errorMessageFromBody(body: string, status: number) {
+  if (body) {
+    try {
+      const payload = JSON.parse(body) as { detail?: unknown; message?: unknown; error?: unknown };
+      const detail = payload.detail ?? payload.message ?? payload.error;
+      if (typeof detail === "string" && detail.trim()) {
+        return detail;
+      }
+    } catch {
+      // Non-JSON responses still fall back to the raw response text.
+    }
+    return body;
+  }
+  return `Request failed: ${status}`;
+}
+
 async function requestJson<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -318,11 +440,11 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
   });
 
   if (!response.ok) {
-    const message = await response.text();
+    const body = await response.text();
     throw new ApiError(
       response.status,
-      message || `Request failed: ${response.status}`,
-      message
+      errorMessageFromBody(body, response.status),
+      body
     );
   }
 
@@ -336,6 +458,83 @@ export async function getHealth() {
 export async function getSummary(player?: string) {
   const query = player ? `?player=${encodeURIComponent(player)}` : "";
   return requestJson<SummaryResponse>(`/api/summary${query}`);
+}
+
+// ---------- Track 4 adaptive engine types ----------
+
+export type BanditArmReport = {
+  topic: string;
+  alpha: number;
+  beta: number;
+  pulls: number;
+  expected_accuracy: number;
+  ci_lower: number;
+  ci_upper: number;
+};
+
+export type AdaptiveProgressionReport = {
+  player?: string;
+  bandit: BanditArmReport[];
+  next_topic: string | null;
+  srs: {
+    total_cards: number;
+    due_count: number;
+    due_card_ids: string[];
+  };
+  elo: {
+    player_rating: number;
+    attempts: number;
+    tracked_scenarios: number;
+  };
+};
+
+export async function getAdaptiveProgression(player?: string) {
+  const query = player ? `?player=${encodeURIComponent(player)}` : "";
+  return requestJson<AdaptiveProgressionReport>(
+    `/api/training/progression${query}`
+  );
+}
+
+export async function getNextBanditTopic(player?: string) {
+  const query = player ? `?player=${encodeURIComponent(player)}` : "";
+  return requestJson<{
+    player: string;
+    topic: string;
+    bandit: BanditArmReport[];
+  }>(`/api/training/progression/next-topic${query}`);
+}
+
+export async function postBanditResult(payload: {
+  player: string;
+  topic: string;
+  correct: boolean;
+}) {
+  return requestJson<AdaptiveProgressionReport>(
+    "/api/training/progression/bandit-result",
+    { method: "POST", body: payload as unknown as JsonValue }
+  );
+}
+
+export async function postSrsReview(payload: {
+  player: string;
+  card_id: string;
+  quality: number;
+}) {
+  return requestJson<AdaptiveProgressionReport>(
+    "/api/training/progression/srs-review",
+    { method: "POST", body: payload as unknown as JsonValue }
+  );
+}
+
+export async function postScenarioResult(payload: {
+  player: string;
+  scenario_id: string;
+  player_won: boolean;
+}) {
+  return requestJson<AdaptiveProgressionReport>(
+    "/api/training/progression/scenario-result",
+    { method: "POST", body: payload as unknown as JsonValue }
+  );
 }
 
 export async function getTrainingContent() {
@@ -400,8 +599,34 @@ export async function createGameSession(payload: Record<string, JsonValue>) {
   });
 }
 
+export async function getSavedGameSessions(player?: string, state = "active") {
+  const params = new URLSearchParams();
+  if (player) params.set("player", player);
+  if (state) params.set("state", state);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<SavedGameSession[]>(`/api/games/sessions${query}`);
+}
+
 export async function getGameSession(sessionId: string) {
   return requestJson<GameSession>(`/api/games/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export async function pauseGameSession(sessionId: string) {
+  return requestJson<GameSession>(`/api/games/sessions/${encodeURIComponent(sessionId)}/pause`, {
+    method: "POST"
+  });
+}
+
+export async function resumeGameSession(sessionId: string) {
+  return requestJson<GameHandState>(`/api/games/sessions/${encodeURIComponent(sessionId)}/resume`, {
+    method: "POST"
+  });
+}
+
+export async function deleteGameSession(sessionId: string) {
+  return requestJson<{ id: string; status: string }>(`/api/games/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE"
+  });
 }
 
 export async function startGameHand(sessionId: string) {
@@ -428,12 +653,6 @@ export async function submitGameInput(
       body: payload
     }
   );
-}
-
-export async function runDemoHand(sessionId: string) {
-  return requestJson<GameHandState>(`/api/games/sessions/${encodeURIComponent(sessionId)}/demo-hand`, {
-    method: "POST"
-  });
 }
 
 export async function getHandHistory(playerName: string, limit = 50) {
@@ -467,17 +686,27 @@ export async function getTrainingProgress(player?: string) {
   return requestJson<TrainingProgress>(`/api/training/progress${query}`);
 }
 
-export async function getHandDetail(playerName: string, handNumber: number) {
+export async function getHandDetail(playerName: string, handNumber: number, sessionId?: string) {
+  const params = new URLSearchParams();
+  if (sessionId) params.set("session_id", sessionId);
+  const query = params.toString() ? `?${params.toString()}` : "";
   return requestJson<HandHistory>(
-    `/api/hands/${encodeURIComponent(playerName)}/${handNumber}`
+    `/api/hands/${encodeURIComponent(playerName)}/${handNumber}${query}`
   );
 }
 
-export async function getChartData(metric: string, player?: string) {
+export async function getChartData(
+  metric: string,
+  player?: string,
+  options: { window?: number; includeAdjusted?: boolean } = {}
+) {
   const params = new URLSearchParams();
   if (player) params.set("player", player);
+  if (options.window && options.window > 1)
+    params.set("window", String(options.window));
+  if (options.includeAdjusted) params.set("include_adjusted", "true");
   const query = params.toString() ? `?${params.toString()}` : "";
-  return requestJson<Array<{ label: string; value: number }>>(
+  return requestJson<ChartRow[]>(
     `/api/charts/${encodeURIComponent(metric)}${query}`
   );
 }
@@ -511,6 +740,27 @@ export async function getFilteredHands(
   return requestJson<HandHistory[]>(`/api/hands/filter?${params.toString()}`);
 }
 // Analytics Helper
+
+/**
+ * Bayesian credible interval block attached to each rate stat.
+ *
+ * Produced by backend/app/services/bayes_stats.py - Beta-Binomial
+ * posterior for rates (VPIP/PFR), nonparametric bootstrap for
+ * continuous metrics (aggression factor). The UI renders this as
+ * "29% (CI 22-37%, n=142)" instead of a bare "29%".
+ */
+export type BayesianStat = {
+  value: number;
+  ci_lower: number;
+  ci_upper: number;
+  sample_size: number;
+  small_sample: boolean;
+  // Only present for rate stats that have a target band.
+  position_vs_target?: "low" | "high" | null;
+  target_low?: number;
+  target_high?: number;
+};
+
 export type AnalyticsReport = {
   basic_stats?: Record<string, JsonValue>;
   playing_style: {
@@ -518,6 +768,11 @@ export type AnalyticsReport = {
     vpip: number;
     pfr: number;
     aggression_factor: number;
+    // Bayesian fields (added in Track 2). Optional so legacy
+    // backends without them still typecheck.
+    vpip_ci?: BayesianStat;
+    pfr_ci?: BayesianStat;
+    aggression_factor_ci?: BayesianStat;
   };
   recommendations: string[];
   performance_metrics: Record<string, JsonValue>;
@@ -525,7 +780,259 @@ export type AnalyticsReport = {
   metric_options?: Record<string, string>;
 };
 
+/**
+ * Variance + risk-of-ruin report from /api/analytics/variance.
+ *
+ * The realized vs EV cumulative line is the standard "luck graph"
+ * from PokerTracker/Hold'em Manager. risk_of_ruin and kelly_fraction
+ * are populated only when bankroll_bbs was provided in the request.
+ */
+export type VarianceReport = {
+  player?: string | null;
+  winrate: {
+    mean_bb100: number;
+    std_bb100: number;
+    session_count: number;
+    total_hands: number;
+    risk_of_ruin: number | null;
+    kelly_fraction: number | null;
+    ci_lower: number;
+    ci_upper: number;
+    small_sample: boolean;
+  } | null;
+  rolling_bb100: Array<{
+    label: string;
+    value: number;
+    window_hands: number;
+  }>;
+  ev_adjusted_lines: Array<{
+    label: string;
+    realized: number;
+    ev: number | null;
+  }>;
+  all_in_luck: {
+    luck_bb_total: number;
+    sessions_with_data: number;
+  } | null;
+  session_count: number;
+};
+
+/**
+ * ICM (Malmuth-Harville) tournament equity report.
+ *
+ * ``equities[i]`` is the expected dollar payout for seat i;
+ * ``chip_shares[i]`` is the chip-EV-only baseline. The gap between
+ * them tells you ICM pressure direction. ``risk_premium`` summarizes
+ * how much equity edge you need over chip-EV breakeven for hero's
+ * seat to take a coinflip-sized all-in.
+ */
+export type IcmEquities = {
+  equities: number[];
+  chip_shares: number[];
+  total_chips: number;
+  total_prize: number;
+};
+
+export type IcmRiskPremium = {
+  chip_ev: number;
+  icm_ev_at_50: number;
+  hero_icm_equity_now: number;
+  hero_icm_equity_win: number;
+  hero_icm_equity_lose: number;
+  risk_premium: number;
+  bubble_factor: number;
+};
+
+export type IcmReport = {
+  player?: string | null;
+  icm: IcmEquities | null;
+  hero_index?: number;
+  risk_premium?: IcmRiskPremium | null;
+  note?: string;
+  error?: string;
+};
+
+export type ChartRow = {
+  label: string;
+  value: number;
+  rolling_value?: number;
+  window_hands?: number;
+  realized_cumulative_bb?: number;
+  ev_cumulative_bb?: number | null;
+};
+
+export type EvLeakGroup = {
+  street: string;
+  position: string;
+  chosen_action: string;
+  recommended_action: string;
+  opponent_type: string;
+  decision_count: number;
+  total_ev_loss_bb: number;
+  total_ev_loss_chips: number;
+  average_ev_loss_bb: number;
+  examples: Array<{
+    hand_number?: number | null;
+    session_id?: string | null;
+    ev_loss_bb: number;
+    quality?: string | null;
+  }>;
+};
+
+export type EvLeakReport = {
+  player?: string | null;
+  priced_decision_count: number;
+  mistake_count: number;
+  total_ev_loss_bb: number;
+  total_ev_loss_chips: number;
+  worst_group?: EvLeakGroup | null;
+  groups: EvLeakGroup[];
+};
+
 export async function getAnalyticsReport(playerName?: string) {
   const query = playerName ? `?player=${encodeURIComponent(playerName)}` : "";
   return requestJson<AnalyticsReport>(`/api/summary/report${query}`);
+}
+
+export async function getEvLeakReport(playerName?: string, limit = 20) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (playerName) params.set("player", playerName);
+  return requestJson<EvLeakReport>(`/api/analytics/ev-leaks?${params.toString()}`);
+}
+
+export async function getVarianceReport(
+  playerName?: string,
+  bankrollBbs?: number
+) {
+  const params = new URLSearchParams();
+  if (playerName) params.set("player", playerName);
+  if (bankrollBbs !== undefined && bankrollBbs > 0)
+    params.set("bankroll_bbs", String(bankrollBbs));
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<VarianceReport>(`/api/analytics/variance${query}`);
+}
+
+export async function getIcmReport(playerName?: string) {
+  const query = playerName ? `?player=${encodeURIComponent(playerName)}` : "";
+  return requestJson<IcmReport>(`/api/analytics/icm${query}`);
+}
+
+// Track 3: regret heatmap (EV loss grouped by structural spot)
+export type RegretHeatmapCell = {
+  street: string;
+  position: number | null;
+  spr_bucket: number;
+  decision_count: number;
+  total_ev_loss_bb: number;
+  average_ev_loss_bb: number;
+  example_keys: Array<{
+    hand_number: number | null;
+    decision_index: number;
+    ev_loss_bb: number;
+  }>;
+};
+
+export type RegretHeatmapReport = {
+  player?: string | null;
+  cells: RegretHeatmapCell[];
+  max_loss_bb: number;
+  totals: {
+    decisions: number;
+    ev_loss_bb: number;
+  };
+};
+
+export async function getRegretHeatmap(playerName?: string, scanHands = 500) {
+  const params = new URLSearchParams({ scan_hands: String(scanHands) });
+  if (playerName) params.set("player", playerName);
+  return requestJson<RegretHeatmapReport>(
+    `/api/analytics/regret-heatmap?${params.toString()}`
+  );
+}
+
+// Track 3: drill seeded from a specific decision.
+export type DrillFromDecisionResponse = {
+  drill: {
+    drill_id: string;
+    player?: string;
+    focus_area?: string;
+    scenario: Record<string, unknown>;
+    quiz: Record<string, unknown>;
+    from_decision?: { hand_number: number; decision_index: number };
+  } | null;
+  source?: { hand_number: number; decision_index: number };
+  error?: string;
+};
+
+export async function postDrillFromDecision(payload: {
+  player: string;
+  hand_number: number;
+  decision_index: number;
+}) {
+  return requestJson<DrillFromDecisionResponse>(
+    "/api/training/drill/from-decision",
+    {
+      method: "POST",
+      body: payload as unknown as JsonValue,
+    }
+  );
+}
+
+// ---------- Track 5: Range + equity types ----------
+
+/** Class-string -> weight map. Used by the frontend RangeGrid. */
+export type RangeClassMap = Record<string, number>;
+
+export type PreflopChartsResponse = {
+  charts: Record<string, RangeClassMap>;
+  raw: Record<string, string>;
+};
+
+export async function getPreflopCharts() {
+  return requestJson<PreflopChartsResponse>("/api/poker/preflop-charts");
+}
+
+/**
+ * One player slot in a range-equity request. Exactly one of
+ * ``hand``, ``range``, or ``preflop_chart`` must be set.
+ */
+export type RangeEquityPlayerSpec = {
+  hand?: string[];
+  range?: string;
+  preflop_chart?: string;
+};
+
+export type RangeEquityResult = {
+  equities: number[];
+  players: Array<{
+    label: string;
+    equity: number;
+    combo_count: number;
+  }>;
+  trials: number | null;
+  board: string[];
+};
+
+export async function postRangeEquity(payload: {
+  players: RangeEquityPlayerSpec[];
+  board?: string[];
+  trials?: number;
+}) {
+  return requestJson<RangeEquityResult>("/api/poker/range-equity", {
+    method: "POST",
+    body: payload as unknown as JsonValue,
+  });
+}
+
+export async function getIcmForSpot(payload: {
+  stacks: number[];
+  payouts: number[];
+  hero_index?: number;
+}) {
+  // requestJson auto-stringifies options.body (typed as JsonValue),
+  // so we pass the object directly.
+  return requestJson<IcmReport>(`/api/analytics/icm/spot`, {
+    method: "POST",
+    body: payload as unknown as JsonValue,
+  });
 }
