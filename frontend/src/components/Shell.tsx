@@ -5,6 +5,7 @@ export type ShellContext = {
   summary: SummaryResponse;
   activePlayer: string | null;
   setActivePlayer?: (player: string | null) => void;
+  refreshSummary?: () => Promise<void>;
 };
 
 type ShellProps = {
@@ -12,6 +13,7 @@ type ShellProps = {
   apiStatus: "checking" | "online" | "offline";
   activePlayer: string | null;
   setActivePlayer?: (player: string | null) => void;
+  refreshSummary?: () => Promise<void>;
 };
 
 function titleCase(value?: string | null) {
@@ -22,7 +24,7 @@ function titleCase(value?: string | null) {
     .join(" ");
 }
 
-export default function Shell({ summary, apiStatus, activePlayer, setActivePlayer }: ShellProps) {
+export default function Shell({ summary, apiStatus, activePlayer, setActivePlayer, refreshSummary }: ShellProps) {
   return (
     <div className="app">
       <div className="glow-layer" />
@@ -46,6 +48,9 @@ export default function Shell({ summary, apiStatus, activePlayer, setActivePlaye
           <NavLink to="/training" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
             Training
           </NavLink>
+          <NavLink to="/learn" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+            Learn
+          </NavLink>
           <NavLink to="/analytics" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
             Analytics
           </NavLink>
@@ -66,7 +71,7 @@ export default function Shell({ summary, apiStatus, activePlayer, setActivePlaye
       </header>
 
       <main>
-        <Outlet context={{ summary, activePlayer, setActivePlayer }} />
+        <Outlet context={{ summary, activePlayer, setActivePlayer, refreshSummary }} />
       </main>
     </div>
   );
