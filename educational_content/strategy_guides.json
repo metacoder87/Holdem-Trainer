@@ -1,26 +1,50 @@
 [
   {
     "title": "Preflop Hand Selection",
-    "content": "\n                **EARLY POSITION (UTG, UTG+1):**\n                Play tight - only premium hands:\n                • Pocket Pairs: AA, KK, QQ, JJ, 10-10\n                • Suited: AKs, AQs, AJs\n                • Offsuit: AK, AQ\n                \n                **MIDDLE POSITION (MP, MP+1):**\n                Add some medium hands:\n                • Pocket Pairs: 99, 88, 77\n                • Suited: KQs, QJs, JTs, A10s, KJs\n                • Offsuit: AJ, KQ\n                \n                **LATE POSITION (CO, BTN):**\n                Play more hands for value and position:\n                • Pocket Pairs: Any pair 22+\n                • Suited: Any two cards 9+ or suited connectors 54s+\n                • Offsuit: A9+, K10+, QJ, J10\n                \n                **BLINDS:**\n                Defend wider against raises, but be careful out of position.\n                ",
+    "content": "**EARLY POSITION (UTG, UTG+1):**\nPlay tight - only premium hands:\n- Pocket Pairs: AA, KK, QQ, JJ, TT\n- Suited: AKs, AQs, AJs\n- Offsuit: AK, AQ\n\n**MIDDLE POSITION (MP, MP+1):**\nAdd some medium hands:\n- Pocket Pairs: 99, 88, 77\n- Suited: KQs, QJs, JTs, ATs, KJs\n- Offsuit: AJ, KQ\n\n**LATE POSITION (CO, BTN):**\nPlay more hands for value and position:\n- Pocket Pairs: Any pair 22+\n- Suited: Any two cards T+ or suited connectors 54s+\n- Offsuit: A9+, KT+, QJ, JT\n\n**BLINDS:**\nDefend wider against raises, but be careful out of position. SB has the worst odds to call; BB has built-in pot odds.",
     "category": "preflop",
     "difficulty": "beginner"
   },
   {
     "title": "Postflop Continuation Betting",
-    "content": "\n                **WHEN TO C-BET:**\n                • You have a strong hand or draw\n                • Board is dry (like A-7-2 rainbow)\n                • Opponent is tight and likely to fold\n                • You're in position\n                \n                **C-BET SIZING:**\n                • Strong hands: 65-75% pot for value\n                • Bluffs: 50-65% pot for fold equity\n                • Dry boards: Smaller sizing (40-50%)\n                • Wet boards: Larger sizing (70-80%)\n                \n                **WHEN NOT TO C-BET:**\n                • Very wet, coordinated boards (9-8-7 with two suits)\n                • Against multiple opponents\n                • When opponent is loose-passive (calling station)\n                • When you have no equity and no fold equity\n                ",
+    "content": "**WHEN TO C-BET:**\n- You have a strong hand or draw\n- Board is dry (like A-7-2 rainbow)\n- Opponent is tight and likely to fold\n- You're in position\n\n**C-BET SIZING:**\n- Strong hands: 65-75% pot for value\n- Bluffs: 50-65% pot for fold equity\n- Dry boards: Smaller sizing (40-50%)\n- Wet boards: Larger sizing (70-80%)\n\n**WHEN NOT TO C-BET:**\n- Very wet, coordinated boards (9-8-7 with two suits)\n- Against multiple opponents\n- When opponent is loose-passive (calling station)\n- When you have no equity and no fold equity",
     "category": "postflop",
     "difficulty": "intermediate"
   },
   {
     "title": "Pot Odds and Drawing Hands",
-    "content": "\n                **CALCULATING POT ODDS:**\n                1. Add bet you must call to current pot\n                2. Divide your call by the total\n                3. Compare to your equity percentage\n                \n                **COMMON DRAWS AND ODDS:**\n                • Flush draw (9 outs): ~35% equity (need 22% pot odds)\n                • Open-ended straight (8 outs): ~31% equity (need 24% pot odds)\n                • Gutshot straight (4 outs): ~16% equity (need 40% pot odds)\n                • Two overcards (6 outs): ~24% equity (need 30% pot odds)\n                \n                **RULE OF 4 AND 2:**\n                • After flop: Multiply outs by 4 for approximate %\n                • After turn: Multiply outs by 2 for approximate %\n                \n                Example: 9 outs after flop = 9 × 4 = 36% equity\n                ",
+    "content": "**CALCULATING POT ODDS:**\n1. Add bet you must call to current pot\n2. Divide your call by the total\n3. Compare to your equity percentage\n\n**COMMON DRAWS AND ODDS:**\n- Flush draw (9 outs): ~35% equity (need 22% pot odds)\n- Open-ended straight (8 outs): ~31% equity (need 24% pot odds)\n- Gutshot straight (4 outs): ~16% equity (need 40% pot odds)\n- Two overcards (6 outs): ~24% equity (need 30% pot odds)\n\n**RULE OF 4 AND 2:**\n- After flop: Multiply outs by 4 for approximate %\n- After turn: Multiply outs by 2 for approximate %\n\nExample: 9 outs after flop = 9 * 4 = 36% equity",
     "category": "math",
     "difficulty": "intermediate"
   },
   {
     "title": "Reading Opponent Types",
-    "content": "\n                **TIGHT-AGGRESSIVE (TAG):**\n                • VPIP: 15-25%, PFR: 12-20%\n                • Strategy: Rarely bluffs, value bets strong hands\n                • Counter: Bluff more, fold to their aggression\n                \n                **LOOSE-AGGRESSIVE (LAG):**\n                • VPIP: 25-40%, PFR: 18-35%\n                • Strategy: Plays many hands aggressively\n                • Counter: Tighten up, value bet thinner\n                \n                **TIGHT-PASSIVE (Rock):**\n                • VPIP: 10-20%, PFR: 5-12%\n                • Strategy: Plays few hands, calls more than raises\n                • Counter: Steal their blinds, value bet thin\n                \n                **LOOSE-PASSIVE (Fish):**\n                • VPIP: 30-60%, PFR: 5-15%\n                • Strategy: Calls too much, rarely raises\n                • Counter: Value bet heavily, avoid bluffs\n                ",
+    "content": "**TIGHT-AGGRESSIVE (TAG):**\n- VPIP: 15-25%, PFR: 12-20%\n- Strategy: Rarely bluffs, value bets strong hands\n- Counter: Bluff more, fold to their aggression\n\n**LOOSE-AGGRESSIVE (LAG):**\n- VPIP: 25-40%, PFR: 18-35%\n- Strategy: Plays many hands aggressively\n- Counter: Tighten up, value bet thinner\n\n**TIGHT-PASSIVE (Rock):**\n- VPIP: 10-20%, PFR: 5-12%\n- Strategy: Plays few hands, calls more than raises\n- Counter: Steal their blinds, value bet thin\n\n**LOOSE-PASSIVE (Fish):**\n- VPIP: 30-60%, PFR: 5-15%\n- Strategy: Calls too much, rarely raises\n- Counter: Value bet heavily, avoid bluffs",
     "category": "psychology",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Bankroll Management and Risk of Ruin",
+    "content": "**BANKROLL RULES OF THUMB:**\n- Cash: 25-40 buyins for the stake\n- MTT: 100+ buyins (high variance)\n- SNG: 50-75 buyins\n\n**RISK OF RUIN FORMULA (approximation):**\nRoR = exp(-2 * mu * BR / sigma^2)\nWhere mu is winrate per hand and sigma is standard deviation per hand.\n\n**EXAMPLE:**\n5 BB/100 winrate, 100 BB/100 std-dev, 2000 BB bankroll:\nRoR = exp(-2 * 0.05 * 2000 / 100) = exp(-2) ~= 13.5%\n\n**REDUCING RoR:**\n- Move down stakes\n- Improve winrate (higher mu)\n- Reduce variance (tighten ranges, avoid coinflips early)\n- Add more bankroll\n\nThe Kelly fraction f* = mu / sigma^2 gives the optimal stake size for log-growth. Full Kelly is volatile; half-Kelly is the practical bankroll constraint most pros target.",
+    "category": "bankroll",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Variance and the EV-Adjusted Winrate",
+    "content": "**WHY VARIANCE MATTERS:**\nPoker decisions are -EV when you fold the best hand or call with the worst. Variance is the noise around that signal. Over 10K hands, variance dominates - skill doesn't show clearly until ~50K hands.\n\n**ALL-IN ADJUSTED (EV) WINRATE:**\nFor every priced decision, the engine records both expected chips and realized chips. Sum the deltas to get your luck component. Subtract luck from realized winnings to get EV winnings.\n\nA losing month at +5 BB/100 EV is normal variance. A winning month at -2 BB/100 EV is running hot. Track BOTH lines.\n\n**SHARPE-LIKE RATIO:**\nrisk-adjusted return = winrate / std-dev\nUseful for comparing stakes/formats. A 3 BB/100 winrate at 60 BB/100 std-dev beats 5 BB/100 at 120 BB/100 std-dev on a risk-adjusted basis.\n\n**SAMPLE SIZE BANDS:**\n- 1K hands: meaningless, ~50 BB/100 standard error on winrate\n- 10K hands: still very noisy (~16 BB/100 SE)\n- 100K hands: 5 BB/100 SE - your winrate finally has signal\n- 500K hands: 2 BB/100 SE - reliable comparison territory",
+    "category": "math",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Tournament ICM and Bubble Play",
+    "content": "**THE INDEPENDENT CHIP MODEL:**\nIn cash, chips equal dollars. In tournaments, they don't. The same 10K chip stack is worth different dollar amounts depending on stack distribution and payouts.\n\n**MALMUTH-HARVILLE:**\nP(player i finishes 1st) = stack_i / total_chips. Conditional on player i finishing 1st, the next probabilities are computed from the remaining pool. Recurse for all positions.\n\n**KEY INSIGHT:**\n- Chip leader is OVER-paid in chip EV (worth less per chip in $)\n- Short stacks are UNDER-paid (worth more per chip in $)\n- Risk premium = how much equity edge you need beyond 50% to take a coinflip at risk\n\n**BUBBLE STRATEGY:**\n- Avoid coinflips as chip leader vs other big stacks (you're risking the most)\n- Apply pressure on medium stacks (they have the most to lose)\n- Short stacks should shove first, call light second\n- Bubble factor > 1.5 means even slight underdogs should fold most spots\n\n**WHAT TO LOOK FOR:**\nBubble factor near 1.0: play chip EV.\nBubble factor 1.3-1.6: meaningful ICM pressure, tighten up.\nBubble factor 2.0+: extreme - fold marginal value, avoid 50-50s.",
+    "category": "tournament",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Bayesian Sample-Size Discipline",
+    "content": "**THE PROBLEM:**\nA 30% VPIP from 40 hands looks identical to a 30% VPIP from 4000 hands when you display them as 'VPIP: 30%'. They are not identical samples - the first one's 95% credible interval is roughly 18-44%, the second is roughly 28.5-31.5%.\n\n**BETA-BINOMIAL POSTERIOR:**\nWith a uniform Beta(1,1) prior, after observing k 'successes' in n trials the posterior is Beta(1+k, 1+n-k). Mean = (1+k)/(2+n). Variance shrinks as n grows.\n\n**WHEN TO FLAG A LEAK:**\nOnly fire 'VPIP too high' when the full 95% CI lies above the target band. Otherwise the data is consistent with the target.\n\nThis kills false-positive coaching. A new player gets warned only when sample size is large enough that the warning is robust.\n\n**ANALOGOUS RULES:**\n- BB/100: ~1000 hands minimum before the CI tightens. Below that, treat winrate as 'unknown'.\n- Aggression factor: highly noisy; bootstrap the CI rather than assuming normality.\n- Decision accuracy: needs at least 20-30 priced decisions for a stable estimate.",
+    "category": "math",
     "difficulty": "advanced"
   }
 ]

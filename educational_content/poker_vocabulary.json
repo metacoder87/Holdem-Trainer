@@ -11,7 +11,7 @@
   },
   {
     "term": "Aggression Factor",
-    "definition": "(Bets + Raises) ÷ Calls - Measures how aggressive a player is postflop",
+    "definition": "(Bets + Raises) / Calls - Measures how aggressive a player is postflop",
     "example": "AF of 3.0 means the player bets/raises 3 times for every call"
   },
   {
@@ -58,5 +58,45 @@
     "term": "Implied Odds",
     "definition": "Pot odds considering money you might win on future betting rounds",
     "example": "Calling a small bet with a draw, expecting to win a big pot if you hit"
+  },
+  {
+    "term": "SPR (Stack-to-Pot Ratio)",
+    "definition": "Effective stack size at the start of postflop play, divided by the pot",
+    "example": "100 BB stacks vs a 6 BB pot = SPR 16 (deep, avoid getting all-in light)"
+  },
+  {
+    "term": "Range",
+    "definition": "The set of hands a player could plausibly hold given their actions",
+    "example": "An UTG open from a tight player might be a range of 99+, AQ+, KQs"
+  },
+  {
+    "term": "GTO",
+    "definition": "Game Theory Optimal - an unexploitable mixed strategy that maximizes EV vs perfect counter-play",
+    "example": "Solvers like CFR+ produce GTO baselines; deviate to exploit, return to GTO to defend"
+  },
+  {
+    "term": "Risk of Ruin",
+    "definition": "Probability of losing your entire bankroll given current winrate and variance",
+    "example": "RoR = exp(-2 * mu * BR / sigma^2). At 5BB/100 with 100BB/100 std and 2000BB roll, RoR ~13%"
+  },
+  {
+    "term": "Kelly Fraction",
+    "definition": "Bankroll share to wager that maximizes log-growth: f* = mu / sigma^2",
+    "example": "Kelly recommends much smaller stakes than most players use; half-Kelly is often safer"
+  },
+  {
+    "term": "ICM (Independent Chip Model)",
+    "definition": "Maps tournament chip stacks to dollar equity via Malmuth-Harville",
+    "example": "Chip leader at the final table is over-paid in chip EV terms; ICM penalizes that"
+  },
+  {
+    "term": "Bubble Factor",
+    "definition": "Ratio of dollar equity lost on a loss vs dollar equity gained on a win",
+    "example": "Bubble factor > 1 means coinflips are -EV in $ even at 50% chip equity"
+  },
+  {
+    "term": "Effective Hand Strength (E[HS^2])",
+    "definition": "Average of squared river equity across all runouts - captures upside variance",
+    "example": "A flush draw has the same E[HS] as a dry middle pair but much higher E[HS^2]"
   }
 ]

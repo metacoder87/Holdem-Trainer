@@ -70,7 +70,7 @@ python scripts/migrate_json_to_db.py --db-url "$PYHOLDEM_DB_URL"
 
 - Python 3.8+
 
-Dependencies are listed in `requirements.txt` (Rich, jsonschema). Dev/test tools are in `requirements-dev.txt`.
+Runtime dependencies are listed in `requirements.txt` and backend service dependencies are listed in `backend/requirements.txt`. Dev/test installs should use `requirements-dev.txt`, which includes both.
 
 ## Install
 
@@ -83,7 +83,7 @@ pip install -r requirements.txt
 For development and testing:
 
 ```bash
-pip install -r requirements-dev.txt
+py -3 -m pip install -r requirements-dev.txt
 ```
 
 ## Run CLI Application
@@ -183,7 +183,7 @@ If you want a clean slate, delete those files/directories (or back them up first
 Run the full test suite:
 
 ```bash
-pip install -r requirements-dev.txt
+py -3 -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 On Windows systems where `python` is the Microsoft Store alias, use `py -3 -m pytest -q`.

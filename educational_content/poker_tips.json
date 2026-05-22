@@ -58,5 +58,65 @@
     "content": "Try to put opponents on a range of hands, not just one specific hand. Consider their position, actions, and tendencies.",
     "category": "advanced",
     "difficulty": "advanced"
+  },
+  {
+    "title": "Never Fold When You Can Check",
+    "content": "Checking costs nothing and preserves all equity. Folding when you could check is strictly dominated. If a coach ever tells you to fold for free, ignore it.",
+    "category": "fundamental",
+    "difficulty": "beginner"
+  },
+  {
+    "title": "SPR Determines Plan",
+    "content": "Stack-to-pot ratio (SPR) at the flop dictates strategy. SPR < 3: commit easily with top pair. SPR 4-10: play normally. SPR > 13: avoid stacking off without strong hands or nuts.",
+    "category": "math",
+    "difficulty": "intermediate"
+  },
+  {
+    "title": "Block Bets",
+    "content": "Small bets on later streets out of position can prevent opponents from making bigger bets you would have to call. They get more value but cost you less.",
+    "category": "betting",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Use the Variance Graph",
+    "content": "Realized winnings = EV + luck. Track all-in-adjusted winrate separately. A losing month at +5BB/100 EV is normal variance, not a strategy failure.",
+    "category": "bankroll",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Don't Bluff a Calling Station",
+    "content": "Loose-passive players call too much. Against them, increase value bets, decrease bluffs, and size up for thin value with marginal hands.",
+    "category": "psychology",
+    "difficulty": "intermediate"
+  },
+  {
+    "title": "Three-Bet Polarized From the Blinds",
+    "content": "Out of position 3-betting works best with a polarized range: premium value (QQ+, AK) plus suited connectors/Ax suited bluffs. Avoid 3-betting medium hands like JTo OOP.",
+    "category": "preflop",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Mind ICM at the Bubble",
+    "content": "In tournaments near the money bubble, dollar EV diverges from chip EV. Chip-leader risk premium climbs — fold marginal jam/call spots that would be standard in cash.",
+    "category": "tournament",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Bet Sizing Matters More Than Bluff Frequency",
+    "content": "Average players over-think frequencies and under-think sizing. Big bets polarize ranges; small bets cap them. Match your size to what your range needs to do.",
+    "category": "betting",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Bayesian Sample Size Discipline",
+    "content": "A 30% VPIP from 40 hands has a credible interval of roughly 18-44%. Don't fire 'too loose' flags until the CI excludes the target band. Small samples lie loudly.",
+    "category": "math",
+    "difficulty": "advanced"
+  },
+  {
+    "title": "Tilt Costs More Than Bad Luck",
+    "content": "Bad beats are inevitable; tilting after them is a choice. Stop, breathe, and review the math: did you make the right decision regardless of outcome? Outcome bias is the silent killer.",
+    "category": "psychology",
+    "difficulty": "beginner"
   }
 ]

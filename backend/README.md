@@ -4,10 +4,12 @@ FastAPI service wrapper for the game engine in `src/`.
 
 ## Run (dev)
 
+From the repository root:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+py -3 -m pip install -r requirements-dev.txt
 PYTHONPATH=backend uvicorn app.main:app --reload
 ```
 

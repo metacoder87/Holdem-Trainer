@@ -83,6 +83,7 @@ main_untracked_*.txt
 # CFR strategy files - large binary artifacts produced by cfr-models.yml
 # and distributed as GitHub Release Assets. Never commit to the repo.
 data/cfr/
+backend/cfr_artifacts/
 *.npz
 
 # k6 load-test results (ephemeral, written to a Docker volume)

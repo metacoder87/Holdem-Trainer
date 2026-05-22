@@ -5,9 +5,7 @@ guided drills, replay review, bankroll management, and multi-metric analytics.
 
 ## Stack
 - Vite + React + TypeScript
-- PixiJS for 2D table graphics (@pixi/react)
-- Framer Motion for key UI animations
-- Howler for sound design
+- DOM/CSS table renderer for gameplay
 - ECharts for analytics dashboards
 
 ## Run (dev)
