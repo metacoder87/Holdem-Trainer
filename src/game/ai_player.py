@@ -4,10 +4,72 @@ Implements different AI playing styles and decision-making logic.
 """
 import random
 from enum import Enum
+from functools import lru_cache
 from typing import Tuple, Dict, List, Optional
 from game.player import Player, PlayerAction
 from game.card import Card, Rank
 from game.hand import Hand
+
+
+@lru_cache(maxsize=4096)
+def _cached_villain_bucket(
+    hole_repr: Tuple[str, str],
+    board_repr: Tuple[str, ...],
+    num_buckets: int,
+    bucketing: str,
+    potential_weight: float,
+) -> Optional[int]:
+    """LRU-cached bucket call keyed by str(card) tuples.
+
+    ``bucketing`` is part of the cache key so the same (hole, board)
+    can have legitimately different bucket IDs under "plain" vs
+    "potential" weighting.
+    """
+    try:
+        # Late imports: keep ai_player free of cfr dependency on import.
+        from cfr.abstractions.hand_bucketing import (
+            hand_bucket,
+            potential_aware_bucket,
+        )
+
+        hole = [_parse_card_repr(c) for c in hole_repr]
+        board = [_parse_card_repr(c) for c in board_repr]
+        if bucketing == "potential":
+            return potential_aware_bucket(
+                hole,
+                board,
+                num_buckets=num_buckets,
+                weight=potential_weight,
+                rng=random.Random(0x60A1),
+            )
+        return hand_bucket(
+            hole,
+            board,
+            num_buckets=num_buckets,
+            rng=random.Random(0x60A1),
+        )
+    except Exception:
+        return None
+
+
+def _parse_card_repr(card_str: str) -> Card:
+    """Inverse of str(Card). Used only by the cached bucket helper."""
+    from game.card import Suit  # local import to avoid cyclic concerns
+
+    cleaned = card_str.strip()
+    suit_glyphs = {"♥": "h", "♦": "d", "♣": "c", "♠": "s"}
+    for glyph, letter in suit_glyphs.items():
+        cleaned = cleaned.replace(glyph, letter)
+    suit_letter = cleaned[-1].lower()
+    rank_part = cleaned[:-1].upper()
+    rank_map = {
+        "2": Rank.TWO, "3": Rank.THREE, "4": Rank.FOUR, "5": Rank.FIVE,
+        "6": Rank.SIX, "7": Rank.SEVEN, "8": Rank.EIGHT, "9": Rank.NINE,
+        "10": Rank.TEN, "T": Rank.TEN,
+        "J": Rank.JACK, "Q": Rank.QUEEN, "K": Rank.KING, "A": Rank.ACE,
+    }
+    suit_map = {"h": Suit.HEARTS, "d": Suit.DIAMONDS, "c": Suit.CLUBS, "s": Suit.SPADES}
+    return Card(suit_map[suit_letter], rank_map[rank_part])
 
 
 def _round_to_nearest_5(amount):
@@ -20,6 +82,7 @@ class AIStyle(Enum):
     WILD = "wild"
     BALANCED = "balanced"
     RANDOM = "random"
+    GTO = "gto"  # Samples actions from a precomputed CFR+ policy.
 
 
 class AIPlayer(Player):
@@ -382,24 +445,47 @@ class BalancedAI(AIPlayer):
         return call_amount / (pot_size + call_amount)
     
     def _estimate_equity(self, game_state: Dict) -> float:
+        """Estimate hand equity via proper multiway Monte Carlo.
+
+        Track 5: replaces the legacy ``base_strength ** (n - 1)``
+        heuristic which ignored card removal entirely. We now call
+        the Monte Carlo equity calculator in ``poker.range_equity``
+        which respects card removal and supports variable opponent
+        counts.
+
+        The Monte Carlo path is wrapped in a try/except so test
+        environments with mocked cards don't crash; on any failure
+        we fall back to the legacy heuristic.
         """
-        Estimate hand equity (simplified version).
-        
-        In a real implementation, this would run Monte Carlo simulations.
-        """
-        community_cards = game_state.get('community_cards', [])
-        players_in_hand = game_state.get('players_in_hand', 2)
-        
-        if not self.hole_cards:
+        community_cards = game_state.get('community_cards', []) or []
+        players_in_hand = max(2, int(game_state.get('players_in_hand', 2) or 2))
+
+        if not self.hole_cards or len(self.hole_cards) != 2:
             return 0.5
-        
-        # Simplified equity based on hand strength
-        base_strength = self._evaluate_hand_strength(community_cards)
-        
-        # Adjust for number of opponents
-        adjusted_equity = base_strength ** (players_in_hand - 1)
-        
-        return adjusted_equity
+
+        try:
+            from poker.range_equity import equity_for_hand_vs_uniform
+
+            n_opponents = max(1, players_in_hand - 1)
+            # Cap opponent count to keep the MC fast on multi-way
+            # tables; equity vs 6+ uniform random opponents is
+            # essentially flat anyway.
+            n_opponents = min(n_opponents, 5)
+            # Trial count tuned for postflop quality without
+            # blowing the AI think-time budget.
+            trials = 300 if community_cards else 500
+            equity = equity_for_hand_vs_uniform(
+                self.hole_cards,
+                board=community_cards,
+                n_opponents=n_opponents,
+                trials=trials,
+            )
+            return max(0.0, min(1.0, float(equity)))
+        except Exception:
+            # Fallback to the legacy heuristic on any error (mocked
+            # Card objects in tests, etc.).
+            base_strength = self._evaluate_hand_strength(community_cards)
+            return base_strength ** (players_in_hand - 1)
     
     def _evaluate_hand_strength(self, community_cards: List[Card]) -> float:
         """Evaluate hand strength for equity calculation."""
@@ -507,15 +593,259 @@ class RandomAI(AIPlayer):
                 return PlayerAction.CALL, current_bet
 
 
+class GTOAIPlayer(BalancedAI):
+    """Solver-driven AI villain.
+
+    On each decision the player tries to look up a cached CFR+ policy
+    for the current spot and sample an action from it. Two failure
+    modes fall back to the BalancedAI parent decision logic:
+
+      1. The spot has no cached policy (uncovered board / pot / SPR).
+      2. The cached policy has no entry for the player's hand bucket.
+
+    ``epsilon`` adds exploration noise on top of the GTO mixed
+    strategy: with probability ``epsilon`` the player samples
+    uniformly across legal actions instead of from the policy. This
+    is useful for training (so the human sees more variety) and
+    matches the standard epsilon-greedy off-equilibrium pattern.
+
+    Construction is lazy with respect to the cfr package - the
+    imports happen at first decision so games without CFR available
+    still spin up a player (they just always hit the fallback path).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        bankroll: int,
+        *,
+        epsilon: float = 0.05,
+        cache_root: Optional[str] = None,
+    ) -> None:
+        super().__init__(name, bankroll)
+        self.ai_style = AIStyle.GTO
+        self.epsilon = max(0.0, min(1.0, float(epsilon)))
+        # cache_root is None -> use advisor's default (backend/cfr_artifacts).
+        self._cache_root = cache_root
+        self._cache = None  # type: ignore[var-annotated]
+        # Track how many decisions resolved from cache vs fallback.
+        self.gto_hits = 0
+        self.gto_misses = 0
+
+    # ---------- Lazy cache + cfr-package wiring ----------
+
+    def _get_cache(self):
+        """Open the cache on first use; return None if unavailable."""
+        if self._cache is not None:
+            return self._cache
+        try:
+            from cfr.cache import SolverCache  # local import; optional dep
+            from pathlib import Path
+
+            if self._cache_root is None:
+                # Mirror the default in gto_advisor: <repo>/backend/cfr_artifacts.
+                # We compute it relative to this file rather than rely on
+                # the advisor's importability.
+                default_root = (
+                    Path(__file__).resolve().parents[2]
+                    / "backend"
+                    / "cfr_artifacts"
+                )
+                self._cache = SolverCache.open(default_root)
+            else:
+                self._cache = SolverCache.open(self._cache_root)
+        except Exception:
+            self._cache = None
+        return self._cache
+
+    # ---------- Decision path ----------
+
+    def make_decision(self, game_state: Dict) -> Tuple[PlayerAction, float]:
+        """Try cached GTO sampling first; fall back to BalancedAI on miss."""
+        action = self._try_gto_decision(game_state)
+        if action is not None:
+            self.gto_hits += 1
+            return action
+        self.gto_misses += 1
+        return super().make_decision(game_state)
+
+    def _try_gto_decision(
+        self, game_state: Dict
+    ) -> Optional[Tuple[PlayerAction, float]]:
+        """Return a sampled (action, amount) from cache, or None on miss."""
+        cache = self._get_cache()
+        if cache is None:
+            return None
+        try:
+            from cfr.spot import SpotKey
+        except Exception:
+            return None
+
+        # Build a SpotKey from villain's perspective. We construct a
+        # decision-shaped dict because SpotKey.from_decision already
+        # implements the right field-to-bucket mapping.
+        pot_total = int(game_state.get("pot_size") or 0)
+        current_bet = int(game_state.get("current_bet") or 0)
+        call_amount = int(
+            game_state.get("call_amount", current_bet - int(self.current_bet or 0))
+        )
+        can_check = call_amount <= 0
+        community = list(game_state.get("community_cards") or [])
+        big_blind = int(game_state.get("big_blind") or 1)
+
+        villain_decision = {
+            "betting_round": game_state.get("betting_round"),
+            "pot_total": pot_total,
+            "hero_stack": int(self.bankroll),
+            "hero_position": int(self.position or 0),
+            "to_call": max(0, call_amount),
+            "can_check": bool(can_check),
+            "board": [str(c) for c in community],
+            "hero_hole_cards": [str(c) for c in (self.hole_cards or [])],
+        }
+        spot = SpotKey.from_decision(villain_decision, big_blind=big_blind)
+        if spot is None or not cache.has(spot):
+            return None
+        policy = cache.get(spot)
+        if policy is None:
+            return None
+
+        # Bucket count + method are meta-stored on the cache entry.
+        entry = cache.entry(spot)
+        meta = entry.meta if (entry and entry.meta) else {}
+        try:
+            from cfr.abstractions.hand_bucketing import (
+                DEFAULT_BUCKETS,
+                DEFAULT_POTENTIAL_WEIGHT,
+            )
+
+            num_buckets = int(meta.get("num_buckets") or DEFAULT_BUCKETS)
+            default_weight = DEFAULT_POTENTIAL_WEIGHT
+        except Exception:
+            num_buckets = 10
+            default_weight = 0.5
+
+        bucketing = str(meta.get("bucketing") or "plain").lower()
+        if bucketing not in {"plain", "potential"}:
+            bucketing = "plain"
+        try:
+            potential_weight = float(
+                meta.get("potential_weight") or default_weight
+            )
+        except (TypeError, ValueError):
+            potential_weight = default_weight
+
+        # Compute the villain's hand bucket via the module-level
+        # LRU cache so repeated decisions on the same flop don't
+        # re-run Monte Carlo equity.
+        hole_repr = tuple(str(c) for c in (self.hole_cards or []))
+        if len(hole_repr) != 2:
+            return None
+        board_repr = tuple(str(c) for c in community)
+        bucket = _cached_villain_bucket(
+            hole_repr,
+            board_repr,
+            num_buckets,
+            bucketing,
+            potential_weight,
+        )
+        if bucket is None:
+            return None
+
+        # Infer history (mirrors gto_advisor._infer_history).
+        if call_amount > 0:
+            history = "r"
+        elif can_check and int(self.position or 0) == 0:
+            history = ""
+        elif can_check:
+            history = "k"
+        else:
+            return None
+
+        probs = policy.probs(f"b={bucket}|h={history}")
+        if not probs:
+            return None
+
+        # Epsilon-greedy: sometimes ignore policy and explore uniformly
+        # over legal actions for variety.
+        if random.random() < self.epsilon:
+            return None  # falls back to BalancedAI -> natural variety
+
+        # Sample a fine-grained action from the policy distribution.
+        actions, weights = zip(*probs.items())
+        try:
+            chosen = random.choices(actions, weights=weights)[0]
+        except (ValueError, IndexError):
+            return None
+
+        return self._cfr_action_to_engine(
+            chosen,
+            pot_total=pot_total,
+            current_bet=current_bet,
+            call_amount=call_amount,
+            big_blind=big_blind,
+        )
+
+    # ---------- CFR -> engine action mapping ----------
+
+    def _cfr_action_to_engine(
+        self,
+        cfr_action: str,
+        *,
+        pot_total: int,
+        current_bet: int,
+        call_amount: int,
+        big_blind: int,
+    ) -> Optional[Tuple[PlayerAction, float]]:
+        """Translate a CFR action name back to an engine (PlayerAction, amount)."""
+        if cfr_action == "FOLD":
+            # Don't fold for free if we can check.
+            if call_amount <= 0:
+                return PlayerAction.CHECK, 0
+            return PlayerAction.FOLD, 0
+
+        if cfr_action == "CHECK_OR_CALL":
+            if call_amount <= 0:
+                return PlayerAction.CHECK, 0
+            return PlayerAction.CALL, current_bet
+
+        if cfr_action == "ALL_IN":
+            return PlayerAction.ALL_IN, self.bankroll
+
+        if cfr_action.startswith("RAISE_"):
+            # Action name is "RAISE_<fraction>" (e.g. RAISE_0.66).
+            try:
+                frac = float(cfr_action.split("_", 1)[1])
+            except (IndexError, ValueError):
+                frac = 0.66  # safe default
+            raise_amount = max(
+                current_bet + max(big_blind, 1),
+                int(round(frac * (pot_total + call_amount))),
+            )
+            raise_amount = min(raise_amount, self.bankroll)
+            raise_amount = _round_to_nearest_5(raise_amount)
+            if raise_amount <= current_bet:
+                # Can't actually raise — fall back to call/check.
+                return (
+                    (PlayerAction.CHECK, 0)
+                    if call_amount <= 0
+                    else (PlayerAction.CALL, current_bet)
+                )
+            return PlayerAction.RAISE, raise_amount
+
+        # Unknown action -> fall back.
+        return None
+
+
 def create_ai_player(name: str, bankroll: int, style: AIStyle) -> AIPlayer:
     """
     Factory function to create AI players.
-    
+
     Args:
         name: Player name
         bankroll: Starting bankroll
         style: AI playing style
-        
+
     Returns:
         AI player instance
     """
@@ -527,6 +857,8 @@ def create_ai_player(name: str, bankroll: int, style: AIStyle) -> AIPlayer:
         return BalancedAI(name, bankroll)
     elif style == AIStyle.RANDOM:
         return RandomAI(name, bankroll)
+    elif style == AIStyle.GTO:
+        return GTOAIPlayer(name, bankroll)
     else:
         raise ValueError(f"Unknown AI style: {style}")
 

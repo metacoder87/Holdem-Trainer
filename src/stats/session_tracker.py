@@ -7,9 +7,9 @@ the training/progression systems (VPIP, PFR, aggression factor, etc.).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 
 @dataclass
@@ -132,6 +132,7 @@ class SessionTracker:
         self._hand_pfr = False
         self._hand_decision_number = 0
         self.hand_history: List[Dict[str, Any]] = []
+        self.on_record_action: Optional[Callable[[Dict[str, Any]], None]] = None
 
     @property
     def active(self) -> bool:
@@ -246,20 +247,21 @@ class SessionTracker:
 
         pot_before_int = int(pot_before)
         amount_int = int(amount)
-        self.hand_history[-1]["actions"].append(
-            {
-                "player": player_name,
-                "action": action,
-                "amount": amount_int,
-                "pot_before": pot_before_int,
-                "pot_after": pot_before_int + amount_int,
-                "betting_round": betting_round,
-                "did_raise": bool(did_raise),
-                "is_aggressive_intent": bool(is_aggressive_intent),
-            }
-        )
+        action_record = {
+            "player": player_name,
+            "action": action,
+            "amount": amount_int,
+            "pot_before": pot_before_int,
+            "pot_after": pot_before_int + amount_int,
+            "betting_round": betting_round,
+            "did_raise": bool(did_raise),
+            "is_aggressive_intent": bool(is_aggressive_intent),
+        }
+        self.hand_history[-1]["actions"].append(action_record)
 
         if player_name != self.player_name:
+            if callable(self.on_record_action):
+                self.on_record_action(dict(action_record))
             return
 
         # VPIP / PFR are preflop-only.
@@ -274,6 +276,8 @@ class SessionTracker:
                 if not self._hand_pfr:
                     self._metrics.pfr_hands += 1
                     self._hand_pfr = True
+            if callable(self.on_record_action):
+                self.on_record_action(dict(action_record))
             return
 
         # Postflop aggression: (aggressive_intent_actions) / (calls).
@@ -282,6 +286,10 @@ class SessionTracker:
         elif action in {"raise", "all_in"} and amount > 0:
             if is_aggressive_intent:
                 self._metrics.postflop_raises += 1
+
+        if callable(self.on_record_action):
+            self.on_record_action(dict(action_record))
+
 
     def record_decision(self, decision: Dict[str, Any]) -> None:
         """Record a graded decision point for the current hand."""
@@ -344,3 +352,39 @@ class SessionTracker:
         self._metrics.bankroll_end = int(bankroll_end)
         self._metrics.ended_at = datetime.now().isoformat()
         return self._metrics.to_dict()
+
+    def snapshot_state(self) -> Dict[str, Any]:
+        """Return enough tracker state to resume analytics mid-session."""
+        return {
+            "player_name": self.player_name,
+            "metrics": asdict(self._metrics) if self._metrics is not None else None,
+            "hand_number": int(self._hand_number),
+            "hand_vpip": bool(self._hand_vpip),
+            "hand_pfr": bool(self._hand_pfr),
+            "hand_decision_number": int(self._hand_decision_number),
+            "hand_history": [dict(hand) for hand in self.hand_history],
+        }
+
+    def restore_state(self, snapshot: Dict[str, Any]) -> None:
+        """Restore tracker state captured by snapshot_state."""
+        if not isinstance(snapshot, dict):
+            return
+
+        self.player_name = str(snapshot.get("player_name") or self.player_name)
+        metrics = snapshot.get("metrics")
+        if isinstance(metrics, dict):
+            valid_keys = set(SessionMetrics.__dataclass_fields__.keys())
+            cleaned = {key: value for key, value in metrics.items() if key in valid_keys}
+            try:
+                self._metrics = SessionMetrics(**cleaned)
+            except TypeError:
+                self._metrics = None
+        else:
+            self._metrics = None
+
+        self._hand_number = int(snapshot.get("hand_number") or 0)
+        self._hand_vpip = bool(snapshot.get("hand_vpip", False))
+        self._hand_pfr = bool(snapshot.get("hand_pfr", False))
+        self._hand_decision_number = int(snapshot.get("hand_decision_number") or 0)
+        history = snapshot.get("hand_history")
+        self.hand_history = [dict(hand) for hand in history if isinstance(hand, dict)] if isinstance(history, list) else []

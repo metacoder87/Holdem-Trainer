@@ -3,16 +3,17 @@ Game Engine module for PyHoldem Pro.
 Orchestrates the main game flow, betting rounds, and hand completion.
 """
 from enum import Enum
-from typing import List, Tuple, Optional, Dict, Any
+from collections import defaultdict
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import random
 
 from game.deck import Deck
 from game.player import Player, PlayerAction
 from game.ai_player import AIPlayer, AIStyle, create_ai_player
 from game.table import Table, TableType
-from game.pot import Pot
+from game.pot import Pot, SidePot
 from game.hand import Hand
-from game.card import Card
+from game.card import Card, Rank, Suit
 from stats.session_tracker import SessionTracker
 
 
@@ -33,6 +34,124 @@ class BettingRound(Enum):
     FLOP = "flop"
     TURN = "turn"
     RIVER = "river"
+
+
+def _build_priced_ev_fields(
+    *,
+    chosen_action: str,
+    pot_total: int,
+    call_amount: int,
+    equity_estimate: float,
+    big_blind: int,
+) -> Dict[str, Any]:
+    """Estimate continue-vs-fold EV for priced decisions.
+
+    V1 intentionally models only the binary choice of folding or continuing
+    for the call price. Raises/all-ins facing a bet are treated as "continue"
+    because sizing EV needs a stronger model than the current heuristic
+    equity estimate.
+    """
+    fields: Dict[str, Any] = {
+        "chosen_ev_chips": None,
+        "best_ev_chips": None,
+        "ev_loss_chips": None,
+        "ev_loss_bb": None,
+        "ev_method": None,
+    }
+
+    if call_amount <= 0 or pot_total <= 0:
+        return fields
+
+    try:
+        equity = float(equity_estimate)
+    except (TypeError, ValueError):
+        fields["ev_method"] = "missing_equity"
+        return fields
+
+    if equity <= 0:
+        fields["ev_method"] = "missing_equity"
+        return fields
+
+    equity = max(0.0, min(1.0, equity))
+    call_ev = equity * (float(pot_total) + float(call_amount)) - float(call_amount)
+    fold_ev = 0.0
+    action = str(chosen_action or "").lower()
+
+    if action == "fold":
+        chosen_ev = fold_ev
+    elif action in {"call", "raise", "all_in"}:
+        chosen_ev = call_ev
+    else:
+        fields["ev_method"] = "unsupported_action"
+        return fields
+
+    best_ev = max(call_ev, fold_ev)
+    ev_loss = max(0.0, best_ev - chosen_ev)
+    bb = max(1.0, float(big_blind or 1))
+
+    fields.update(
+        {
+            "chosen_ev_chips": round(chosen_ev, 4),
+            "best_ev_chips": round(best_ev, 4),
+            "ev_loss_chips": round(ev_loss, 4),
+            "ev_loss_bb": round(ev_loss / bb, 4),
+            "ev_method": "call_fold_continue_v1",
+        }
+    )
+    return fields
+
+
+def _card_to_snapshot(card: Card) -> Dict[str, Any]:
+    return {
+        "rank": card.rank.name,
+        "suit": card.suit.name,
+        "text": str(card),
+    }
+
+
+def _card_from_snapshot(payload: Any) -> Card:
+    if isinstance(payload, dict):
+        return Card(Suit[str(payload["suit"])], Rank[str(payload["rank"])])
+    if isinstance(payload, str):
+        cleaned = payload.strip()
+        suit_aliases = {
+            "♥": Suit.HEARTS,
+            "♡": Suit.HEARTS,
+            "h": Suit.HEARTS,
+            "H": Suit.HEARTS,
+            "♦": Suit.DIAMONDS,
+            "♢": Suit.DIAMONDS,
+            "d": Suit.DIAMONDS,
+            "D": Suit.DIAMONDS,
+            "♣": Suit.CLUBS,
+            "c": Suit.CLUBS,
+            "C": Suit.CLUBS,
+            "♠": Suit.SPADES,
+            "s": Suit.SPADES,
+            "S": Suit.SPADES,
+        }
+        suit = suit_aliases.get(cleaned[-1])
+        rank_text = cleaned[:-1].upper()
+        rank_aliases = {
+            "2": Rank.TWO,
+            "3": Rank.THREE,
+            "4": Rank.FOUR,
+            "5": Rank.FIVE,
+            "6": Rank.SIX,
+            "7": Rank.SEVEN,
+            "8": Rank.EIGHT,
+            "9": Rank.NINE,
+            "10": Rank.TEN,
+            "T": Rank.TEN,
+            "J": Rank.JACK,
+            "Q": Rank.QUEEN,
+            "K": Rank.KING,
+            "A": Rank.ACE,
+        }
+        rank = rank_aliases.get(rank_text)
+        if suit is not None and rank is not None:
+            return Card(suit, rank)
+    raise ValueError(f"Cannot restore card from {payload!r}")
 
 
 class GameEngine:
@@ -73,6 +192,10 @@ class GameEngine:
         self.ante = 0
         self.limit_type = "no_limit"
         self.tournament_mode = False
+        # Villain style controls which AI class spawns opponents. Set
+        # by the API layer before start_game; defaults to the legacy
+        # mixed-style behavior.
+        self.villain_style: str = "balanced"
         self.blind_level = 1
         self._tournament_hands_per_level = 20
         self._tournament_blind_increase_factor = 1.5
@@ -111,6 +234,23 @@ class GameEngine:
         self._last_winning_hands: List[Dict[str, Any]] = []
         self._last_won_by_fold = False
         self._last_game_over_reason: Optional[str] = None
+        self._state_change_callback: Optional[Callable[[str], None]] = None
+        self._betting_loop_state: Optional[Dict[str, Any]] = None
+        self._restored_pending_continuation = False
+        self._resume_started = False
+        self.session_tracker.on_record_action = lambda _action: self._emit_state_change("action")
+
+    def set_state_change_callback(self, callback: Optional[Callable[[str], None]]) -> None:
+        self._state_change_callback = callback
+
+    def _emit_state_change(self, reason: str) -> None:
+        callback = self._state_change_callback
+        if not callable(callback):
+            return
+        try:
+            callback(reason)
+        except Exception:
+            return
 
     def _is_fixed_limit(self) -> bool:
         return str(self.limit_type).lower() in {"limit", "fixed_limit", "fixed-limit"}
@@ -414,16 +554,20 @@ class GameEngine:
         # Add human player
         self.table.add_player(self.human_player)
         
-        # Add AI opponents
-        ai_styles = [AIStyle.CAUTIOUS, AIStyle.WILD, AIStyle.BALANCED, AIStyle.RANDOM]
+        # Add AI opponents. villain_style="gto" replaces every villain
+        # with a GTOAIPlayer; the legacy mixed roster is the default.
+        if str(getattr(self, "villain_style", "balanced")).lower() == "gto":
+            ai_styles = [AIStyle.GTO] * max(1, num_opponents)
+        else:
+            ai_styles = [AIStyle.CAUTIOUS, AIStyle.WILD, AIStyle.BALANCED, AIStyle.RANDOM]
         for i in range(num_opponents):
             ai_style = ai_styles[i % len(ai_styles)]
             ai_player = create_ai_player(f"AI_{i+1}", self.human_player.bankroll, ai_style)
             self.table.add_player(ai_player)
-            
+
         # Create pot
         self.pot = Pot()
-        
+
         # Create deck
         self.deck = Deck()
         
@@ -457,8 +601,11 @@ class GameEngine:
         # Add human player
         self.table.add_player(self.human_player)
         
-        # Add AI opponents
-        ai_styles = [AIStyle.CAUTIOUS, AIStyle.WILD, AIStyle.BALANCED, AIStyle.RANDOM]
+        # Add AI opponents (see villain_style note in _setup_cash_game_table).
+        if str(getattr(self, "villain_style", "balanced")).lower() == "gto":
+            ai_styles = [AIStyle.GTO] * max(1, num_opponents)
+        else:
+            ai_styles = [AIStyle.CAUTIOUS, AIStyle.WILD, AIStyle.BALANCED, AIStyle.RANDOM]
         for i in range(num_opponents):
             ai_style = ai_styles[i % len(ai_styles)]
             ai_player = create_ai_player(f"AI_{i+1}", starting_chips, ai_style)
@@ -469,6 +616,55 @@ class GameEngine:
         
         # Create deck
         self.deck = Deck()
+
+    def _record_street_event(
+        self,
+        event: str,
+        *,
+        cards: Optional[List[Card]] = None,
+        burned: Optional[Card] = None,
+    ) -> None:
+        if not self.session_tracker.hand_history:
+            return
+        payload: Dict[str, Any] = {
+            "event": event,
+            "street": self.game_state.value if isinstance(self.game_state, GameState) else str(self.game_state),
+            "community_cards": [str(card) for card in self.community_cards],
+            "deck_remaining": [_card_to_snapshot(card) for card in self.deck.cards] if self.deck else [],
+        }
+        if cards is not None:
+            payload["cards"] = [_card_to_snapshot(card) for card in cards]
+        if burned is not None:
+            payload["burned"] = _card_to_snapshot(burned)
+
+        hand = self.session_tracker.hand_history[-1]
+        events = hand.setdefault("street_events", [])
+        if not isinstance(events, list):
+            events = []
+            hand["street_events"] = events
+        events.append(payload)
+
+    def _set_betting_loop_state(
+        self,
+        *,
+        betting_round: BettingRound,
+        players_in_round: List[Player],
+        players_acted: Dict[Player, bool],
+        highest_bet: int,
+        player_index: int,
+    ) -> None:
+        next_player = players_in_round[player_index] if players_in_round else None
+        self._betting_loop_state = {
+            "betting_round": betting_round.value,
+            "players_in_round": [player.name for player in players_in_round],
+            "players_acted": {player.name: bool(players_acted.get(player, False)) for player in players_in_round},
+            "highest_bet": int(highest_bet),
+            "player_index": int(player_index),
+            "next_to_act": next_player.name if next_player is not None else None,
+            "min_raise_increment": int(self._min_raise_increment),
+            "raises_in_round": int(self._raises_in_round),
+            "raise_closed_players": [player.name for player in self._raise_closed_players],
+        }
         
     def _deal_hole_cards(self) -> None:
         """Deal hole cards to all players."""
@@ -562,7 +758,7 @@ class GameEngine:
                     did_raise=False,
                 )
         
-    def _run_betting_round(self, betting_round: BettingRound) -> None:
+    def _run_betting_round(self, betting_round: BettingRound, *, resume: bool = False) -> None:
         """
         Run a complete betting round.
 
@@ -571,29 +767,55 @@ class GameEngine:
         """
         self.current_betting_round = betting_round
 
-        players_in_round = self._get_current_hand_players()
+        restored_loop = self._betting_loop_state if resume else None
+        players_by_name = {player.name: player for player in self._get_current_hand_players()}
+        if (
+            isinstance(restored_loop, dict)
+            and restored_loop.get("betting_round") == betting_round.value
+            and isinstance(restored_loop.get("players_in_round"), list)
+        ):
+            players_in_round = [
+                players_by_name[name]
+                for name in restored_loop.get("players_in_round", [])
+                if name in players_by_name
+            ]
+        else:
+            players_in_round = self._get_current_hand_players()
         active_players = [p for p in players_in_round if not p.folded]
         if len(active_players) < 2:
             return
 
         highest_bet = max(p.current_bet for p in active_players)
         self._reset_betting_round_state(betting_round, starting_highest_bet=int(highest_bet))
-
-        # Determine starting position (by seat index, 0-8) and map into the
-        # compacted players list to handle empty seats (e.g. after eliminations).
-        if betting_round == BettingRound.PREFLOP:
-            bb_pos = self.table.get_player_position(self.table.get_big_blind_player())
-            start_seat = (bb_pos + 1) % 9 if bb_pos is not None else 0
+        if isinstance(restored_loop, dict) and restored_loop.get("betting_round") == betting_round.value:
+            highest_bet = int(restored_loop.get("highest_bet") or highest_bet)
+            self._min_raise_increment = int(restored_loop.get("min_raise_increment") or self._min_raise_increment)
+            self._raises_in_round = int(restored_loop.get("raises_in_round") or self._raises_in_round)
+            closed_names = restored_loop.get("raise_closed_players") or []
+            self._raise_closed_players = {players_by_name[name] for name in closed_names if name in players_by_name}
+            acted_by_name = restored_loop.get("players_acted") if isinstance(restored_loop.get("players_acted"), dict) else {}
+            players_acted = {p: bool(acted_by_name.get(p.name, False)) for p in players_in_round}
+            player_index = int(restored_loop.get("player_index") or 0)
         else:
-            dealer_pos = self.table.get_player_position(self.table.get_dealer_player())
-            start_seat = (dealer_pos + 1) % 9 if dealer_pos is not None else 0
+            # Determine starting position (by seat index, 0-8) and map into the
+            # compacted players list to handle empty seats (e.g. after eliminations).
+            if betting_round == BettingRound.PREFLOP:
+                bb_pos = self.table.get_player_position(self.table.get_big_blind_player())
+                start_seat = (bb_pos + 1) % 9 if bb_pos is not None else 0
+            else:
+                dealer_pos = self.table.get_player_position(self.table.get_dealer_player())
+                start_seat = (dealer_pos + 1) % 9 if dealer_pos is not None else 0
+
+            num_players = len(players_in_round)
+            if num_players == 0:
+                return
+            player_index = next((i for i, p in enumerate(players_in_round) if p.position >= start_seat), 0)
+            players_acted = {p: False for p in players_in_round}
 
         num_players = len(players_in_round)
         if num_players == 0:
             return
-        player_index = next((i for i, p in enumerate(players_in_round) if p.position >= start_seat), 0)
-
-        players_acted = {p: False for p in players_in_round}
+        player_index = player_index % num_players
 
         while True:
             # Check before choosing a player so all-in-only streets end without
@@ -609,6 +831,15 @@ class GameEngine:
             if player.folded or player.all_in or player.bankroll <= 0:
                 player_index = (player_index + 1) % num_players
                 continue
+
+            self._set_betting_loop_state(
+                betting_round=betting_round,
+                players_in_round=players_in_round,
+                players_acted=players_acted,
+                highest_bet=int(highest_bet),
+                player_index=player_index,
+            )
+            self._emit_state_change("next_to_act")
 
             # Get player action
             action, amount = self._get_player_action(player, self.game_state, highest_bet)
@@ -815,6 +1046,9 @@ class GameEngine:
                     )
 
             player_index = (player_index + 1) % num_players
+
+        self._betting_loop_state = None
+        self._emit_state_change(f"{betting_round.value}_betting_complete")
 
     def _is_betting_round_complete(self, players: List[Player], players_acted: Dict[Player, bool], highest_bet: float) -> bool:
         """
@@ -1208,8 +1442,36 @@ class GameEngine:
             hand_strength = float(HandOddsCalculator.calculate_hand_strength(hole_cards, community_cards))
             hand_potential = float(HandOddsCalculator.calculate_hand_potential(hole_cards, community_cards))
             opponents = max(0, int(players_in_hand or 0) - 1)
-            opponent_factor = 1.0 / (1.0 + opponents * 0.2) if opponents > 0 else 1.0
-            equity_estimate = min(1.0, (hand_strength + hand_potential * 0.4) * opponent_factor)
+
+            # Track 5: real Monte Carlo equity with card removal,
+            # replacing the legacy (hand_strength + 0.4*potential) *
+            # opponent_factor heuristic. Falls back to the legacy
+            # estimate on any failure (e.g. malformed cards in tests).
+            try:
+                from poker.range_equity import equity_for_hand_vs_uniform
+
+                # Bound opponent count: more than ~5 random opponents
+                # gives essentially flat equity AND is a long
+                # Monte Carlo. Live coach budget is ~150 ms.
+                n_opp = min(max(1, opponents), 5)
+                # Slightly fewer trials than the engine default so
+                # this runs comfortably inside the request budget.
+                trials = 300 if len(community_cards) >= 3 else 500
+                equity_estimate = float(
+                    equity_for_hand_vs_uniform(
+                        hole_cards,
+                        board=community_cards,
+                        n_opponents=n_opp,
+                        trials=trials,
+                    )
+                )
+            except Exception:
+                opponent_factor = (
+                    1.0 / (1.0 + opponents * 0.2) if opponents > 0 else 1.0
+                )
+                equity_estimate = min(
+                    1.0, (hand_strength + hand_potential * 0.4) * opponent_factor
+                )
 
             cards_to_come = 0
             if len(community_cards) == 3:
@@ -1304,6 +1566,28 @@ class GameEngine:
             "chosen_amount": int(chosen_amount),
         }
 
+        # Stack-to-pot ratio + SPR bucket. Used by the regret heatmap
+        # (Track 3) so we can group EV losses by strategic SPR band
+        # rather than raw chip totals. Mirrors cfr.spot.spr_bucket_for
+        # cutoffs (≤3, 3-6, 6-12, 12-25, >25).
+        hero_stack = int(getattr(self.human_player, "bankroll", 0) or 0)
+        if pot_total > 0:
+            spr_raw = hero_stack / float(pot_total)
+        else:
+            spr_raw = 0.0
+        if spr_raw <= 3.0:
+            spr_bucket_idx = 1
+        elif spr_raw <= 6.0:
+            spr_bucket_idx = 2
+        elif spr_raw <= 12.0:
+            spr_bucket_idx = 3
+        elif spr_raw <= 25.0:
+            spr_bucket_idx = 4
+        else:
+            spr_bucket_idx = 5
+        decision["spr"] = round(float(spr_raw), 3)
+        decision["spr_bucket"] = int(spr_bucket_idx)
+
         players_in_hand = 0
         if self.table is not None:
             try:
@@ -1391,7 +1675,15 @@ class GameEngine:
                 except Exception:
                     analysis = {}
         else:
-            if call_amount > 0 and pot_total > 0 and equity_estimate > 0:
+            # IMPORTANT: only treat this as a "facing a bet" decision
+            # when checking is *not* a legal option AND the hero
+            # actually owes chips to call. The earlier version omitted
+            # the ``not can_check`` guard, which caused the adviser to
+            # recommend ``fold`` in spots where hero could check for
+            # free — a strict math bug (fold strictly dominated by
+            # check when call_amount==0 OR can_check==True).
+            facing_bet = call_amount > 0 and not can_check
+            if facing_bet and pot_total > 0 and equity_estimate > 0:
                 try:
                     from stats.calculator import PotOddsCalculator
 
@@ -1452,6 +1744,15 @@ class GameEngine:
         decision["recommended_action"] = recommended_action
         decision["quality"] = quality
         decision["analysis"] = analysis
+        decision.update(
+            _build_priced_ev_fields(
+                chosen_action=chosen,
+                pot_total=int(pot_total),
+                call_amount=int(call_amount),
+                equity_estimate=float(equity_estimate),
+                big_blind=int(self.big_blind or 1),
+            )
+        )
 
         try:
             self.session_tracker.record_decision(decision)
@@ -1621,10 +1922,13 @@ class GameEngine:
     def _deal_flop(self) -> None:
         """Deal the flop (3 community cards)."""
         # Burn one card
-        self.deck.deal_card()
+        burned = self.deck.deal_card()
         
         # Deal 3 cards
-        self.community_cards = self.deck.deal_cards(3)
+        dealt = self.deck.deal_cards(3)
+        self.community_cards = dealt
+        self._record_street_event("deal_flop", cards=dealt, burned=burned)
+        self._emit_state_change("deal_flop")
         
         # Display the flop
         print("\n" + "="*70)
@@ -1635,10 +1939,13 @@ class GameEngine:
     def _deal_turn(self) -> None:
         """Deal the turn (4th community card)."""
         # Burn one card
-        self.deck.deal_card()
+        burned = self.deck.deal_card()
         
         # Deal 1 card
-        self.community_cards.append(self.deck.deal_card())
+        dealt = self.deck.deal_card()
+        self.community_cards.append(dealt)
+        self._record_street_event("deal_turn", cards=[dealt], burned=burned)
+        self._emit_state_change("deal_turn")
         
         # Display the turn
         print("\n" + "="*70)
@@ -1649,10 +1956,13 @@ class GameEngine:
     def _deal_river(self) -> None:
         """Deal the river (5th community card)."""
         # Burn one card
-        self.deck.deal_card()
+        burned = self.deck.deal_card()
         
         # Deal 1 card
-        self.community_cards.append(self.deck.deal_card())
+        dealt = self.deck.deal_card()
+        self.community_cards.append(dealt)
+        self._record_street_event("deal_river", cards=[dealt], burned=burned)
+        self._emit_state_change("deal_river")
         
         # Display the river
         print("\n" + "="*70)
@@ -1694,12 +2004,27 @@ class GameEngine:
         
     def _distribute_pot(self, winners: List[Player]) -> None:
         """
-        Distribute pot to winners.
-        
+        Distribute the pot to winners.
+
+        Defensive: this function GUARANTEES that the pot total is
+        credited to *some* winner before returning, unless the pot
+        was empty to start with. The earlier version had a path where
+        ``Pot.distribute_to_winners`` could return an empty dict (e.g.
+        if the contributing eligible-player list didn't intersect the
+        ``player_best_hands`` keys) and chips would be silently lost.
+        We now capture ``pot_total_before`` and fall through to the
+        equal-split path if the main distribution credited nothing.
+
         Args:
             winners: List of winning players
         """
         if not winners or not self.pot:
+            return
+
+        # Snapshot pot total BEFORE we mutate any pot state. Used for
+        # the "did we actually transfer chips?" guard below.
+        pot_total_before = int(self.pot.total)
+        if pot_total_before <= 0:
             return
 
         active_players = self._get_unfolded_hand_players()
@@ -1707,11 +2032,12 @@ class GameEngine:
 
         # If everyone else folded, the last player wins all remaining pots.
         if won_by_fold and len(winners) == 1:
-            winners[0].add_winnings(self.pot.total)
+            winners[0].add_winnings(pot_total_before)
             self.pot.reset()
             return
 
-        # Create side pots (no-ops if not needed) and distribute based on best hands.
+        # Create side pots (no-ops if not needed) and distribute based
+        # on best hands.
         self.pot.create_side_pots()
 
         player_best_hands: Dict[Player, Hand] = {}
@@ -1727,21 +2053,47 @@ class GameEngine:
                 except Exception:
                     continue
 
+        credited_total = 0
         if player_best_hands:
             winnings = self.pot.distribute_to_winners(player_best_hands)
             for player, amount in winnings.items():
-                player.add_winnings(amount)
-            return
+                player.add_winnings(int(amount))
+                credited_total += int(amount)
 
-        # Fallback (primarily for tests/mocks without real cards): split equally.
-        pot_amount = self.pot.total
-        amount_per_winner = pot_amount // len(winners)
-        remainder = pot_amount % len(winners)
+            # If the per-hand distribution credited the full pot we
+            # are done. This is the normal showdown path.
+            if credited_total >= pot_total_before:
+                return
 
-        for i, winner in enumerate(winners):
-            win_amount = amount_per_winner + (1 if i < remainder else 0)
-            winner.add_winnings(win_amount)
+            # Defensive recovery: something dropped chips on the
+            # floor. Log it and fall through to the equal-split
+            # fallback so the table reconciles instead of silently
+            # losing money.
+            try:
+                import logging
 
+                logging.getLogger(__name__).warning(
+                    "Pot distribution under-credited (pot=%s, credited=%s); "
+                    "falling back to equal split among winners.",
+                    pot_total_before,
+                    credited_total,
+                )
+            except Exception:
+                pass
+
+        # Fallback: split the *unallocated remainder* equally among the
+        # given winners. Covers test mocks without cards AND the
+        # edge case above.
+        remainder_amount = pot_total_before - credited_total
+        if remainder_amount > 0 and winners:
+            amount_per_winner = remainder_amount // len(winners)
+            spillover = remainder_amount % len(winners)
+            for i, winner in enumerate(winners):
+                win_amount = amount_per_winner + (1 if i < spillover else 0)
+                if win_amount > 0:
+                    winner.add_winnings(win_amount)
+
+        # Ensure the pot ends at zero regardless of which path ran.
         self.pot.reset()
             
     def play_hand(self) -> None:
@@ -1778,6 +2130,11 @@ class GameEngine:
                 hero_hole_cards=[str(c) for c in (self.human_player.hole_cards or [])],
                 hand_meta=hand_meta,
             )
+            self._record_street_event(
+                "deal_hole_cards",
+                cards=[card for player in players_for_hand for card in player.hole_cards],
+            )
+            self._emit_state_change("deal_hole_cards")
         self._post_blinds()
         self._run_betting_round(BettingRound.PREFLOP)
         
@@ -1903,9 +2260,20 @@ class GameEngine:
             if not getattr(self, "_test_mode", False):
                 print("\nPress Enter to continue...")
                 input()
-        except (ValueError, AttributeError):
-            # Handle case where hand wasn't properly set up (e.g., in tests)
-            pass
+        except (ValueError, AttributeError) as exc:
+            # Hand wasn't fully set up (typical in tests with mocked
+            # tables). Surface the error via the logger so a real
+            # production drop is no longer silent — earlier versions
+            # of this except silently swallowed pot-distribution
+            # errors and players' winnings vanished.
+            try:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "_complete_hand suppressed %s: %s", type(exc).__name__, exc
+                )
+            except Exception:
+                pass
         
         self.hands_played += 1
         self.game_state = GameState.HAND_COMPLETE
@@ -1920,6 +2288,7 @@ class GameEngine:
             self._handle_eliminations()
 
         self._last_game_over_reason = self.get_game_over_reason()
+        self._emit_state_change("hand_complete")
 
     def _build_hand_meta(self) -> Dict[str, Any]:
         """Build metadata captured at the start of a hand for replay/training."""
@@ -2303,31 +2672,376 @@ class GameEngine:
                 if self.data_manager:
                     self.data_manager.save_player(self.human_player)
                 
+    def to_snapshot(self) -> Dict[str, Any]:
+        """Serialize live engine state for exact mid-hand recovery."""
+        players_payload: List[Dict[str, Any]] = []
+        player_seats: Dict[str, int] = {}
+        if self.table:
+            for seat_index, player in enumerate(self.table.seats):
+                if player is None:
+                    continue
+                player_seats[player.name] = seat_index
+                ai_style = getattr(player, "ai_style", None)
+                players_payload.append(
+                    {
+                        "seat": seat_index,
+                        "name": player.name,
+                        "bankroll": int(player.bankroll),
+                        "current_bet": int(player.current_bet),
+                        "total_bet": int(getattr(player, "total_bet", 0)),
+                        "folded": bool(player.folded),
+                        "all_in": bool(player.all_in),
+                        "is_ai": bool(getattr(player, "is_ai", False)),
+                        "is_hero": player is self.human_player,
+                        "position": int(getattr(player, "position", seat_index)),
+                        "hole_cards": [_card_to_snapshot(card) for card in player.hole_cards],
+                        "hands_played": int(getattr(player, "hands_played", 0)),
+                        "hands_won": int(getattr(player, "hands_won", 0)),
+                        "total_winnings": int(getattr(player, "total_winnings", 0)),
+                        "ai_style": ai_style.name if ai_style is not None else None,
+                    }
+                )
+
+        pot_payload: Dict[str, Any] = {"total": 0, "main_pot": 0, "side_pots": [], "contributions": [], "eligible_players": []}
+        if self.pot:
+            pot_payload = {
+                "total": int(self.pot.total),
+                "main_pot": int(self.pot.main_pot),
+                "side_pots": [
+                    {
+                        "amount": int(side_pot.amount),
+                        "eligible_players": [player.name for player in side_pot.eligible_players],
+                    }
+                    for side_pot in self.pot.side_pots
+                ],
+                "contributions": [
+                    {"player": player.name, "amount": int(amount)}
+                    for player, amount in self.pot.player_contributions.items()
+                ],
+                "eligible_players": [player.name for player in self.pot.eligible_players],
+            }
+
+        return {
+            "schema_version": 1,
+            "game_type": "tournament" if self.tournament_mode else "cash",
+            "limit_type": self.limit_type,
+            "training": bool(self.training_enabled),
+            "in_game_quizzes": bool(self.in_game_quizzes_enabled),
+            "hud": bool(self.hud_enabled),
+            "post_hand_feedback": bool(self.post_hand_feedback_enabled),
+            "game_state": self.game_state.value,
+            "current_betting_round": self.current_betting_round.value if self.current_betting_round else None,
+            "small_blind": int(self.small_blind),
+            "big_blind": int(self.big_blind),
+            "ante": int(getattr(self, "ante", 0) or 0),
+            "blind_level": int(getattr(self, "blind_level", 1) or 1),
+            "community_cards": [_card_to_snapshot(card) for card in self.community_cards],
+            "deck": {
+                "remaining": [_card_to_snapshot(card) for card in self.deck.cards] if self.deck else [],
+            },
+            "table": {
+                "table_type": self.table.table_type.value if self.table else None,
+                "max_players": int(self.table.max_players) if self.table else 0,
+                "dealer_position": int(self.table.dealer_position) if self.table else 0,
+                "small_blind_position": int(self.table.small_blind_position) if self.table else 1,
+                "big_blind_position": int(self.table.big_blind_position) if self.table else 2,
+                "players": players_payload,
+            },
+            "pot": pot_payload,
+            "tracker": self.session_tracker.snapshot_state(),
+            "current_hand_players": [player.name for player in self._get_current_hand_players()],
+            "last_winning_hands": list(self._last_winning_hands),
+            "last_won_by_fold": bool(self._last_won_by_fold),
+            "last_game_over_reason": self._last_game_over_reason,
+            "betting_loop": dict(self._betting_loop_state) if isinstance(self._betting_loop_state, dict) else None,
+            "raise_state": {
+                "min_raise_increment": int(self._min_raise_increment),
+                "raises_in_round": int(self._raises_in_round),
+                "raise_closed_players": [player.name for player in self._raise_closed_players],
+            },
+        }
+
+    @classmethod
+    def restore_from_snapshot(
+        cls,
+        snapshot: Dict[str, Any],
+        *,
+        data_manager: Any = None,
+        input_handler: Any = None,
+    ) -> "GameEngine":
+        """Rebuild a live engine from a persisted live_snapshot payload."""
+        engine_snapshot = snapshot.get("engine") if isinstance(snapshot.get("engine"), dict) else snapshot
+        table_snapshot = engine_snapshot.get("table") if isinstance(engine_snapshot.get("table"), dict) else {}
+        player_rows = table_snapshot.get("players") if isinstance(table_snapshot.get("players"), list) else []
+        hero_row = next((row for row in player_rows if isinstance(row, dict) and row.get("is_hero")), None)
+        if hero_row is None:
+            hero_row = player_rows[0] if player_rows and isinstance(player_rows[0], dict) else {"name": snapshot.get("player_name") or "Guest", "bankroll": 0}
+
+        human = Player(str(hero_row.get("name") or snapshot.get("player_name") or "Guest"), int(hero_row.get("bankroll") or 0))
+        engine = cls(human, data_manager=data_manager, display=None, input_handler=input_handler)
+        engine._test_mode = True
+        engine.limit_type = str(engine_snapshot.get("limit_type") or snapshot.get("limit_type") or "no_limit")
+        engine.training_enabled = bool(engine_snapshot.get("training", False))
+        engine.in_game_quizzes_enabled = bool(engine_snapshot.get("in_game_quizzes", engine.training_enabled))
+        engine.hud_enabled = bool(engine_snapshot.get("hud", False))
+        engine.post_hand_feedback_enabled = bool(engine_snapshot.get("post_hand_feedback", False))
+        engine.small_blind = int(engine_snapshot.get("small_blind") or 0)
+        engine.big_blind = int(engine_snapshot.get("big_blind") or 0)
+        engine.ante = int(engine_snapshot.get("ante") or 0)
+        engine.blind_level = int(engine_snapshot.get("blind_level") or 1)
+        engine.tournament_mode = str(engine_snapshot.get("game_type") or snapshot.get("game_type") or "cash") == "tournament"
+
+        max_players = int(table_snapshot.get("max_players") or max(2, len(player_rows)))
+        max_players = max(2, min(9, max_players))
+        table_type = TableType.TOURNAMENT if engine.tournament_mode else TableType.CASH_GAME
+        engine.table = Table(table_type=table_type, max_players=max_players)
+        engine.table.seats = [None] * 9
+        engine.table._num_players = 0
+
+        players_by_name: Dict[str, Player] = {}
+        for row in player_rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "")
+            if not name:
+                continue
+            if row.get("is_hero") or name == human.name:
+                player = human
+            elif row.get("is_ai"):
+                try:
+                    style = AIStyle[str(row.get("ai_style") or "BALANCED")]
+                except Exception:
+                    style = AIStyle.BALANCED
+                player = create_ai_player(name, int(row.get("bankroll") or 0), style)
+            else:
+                player = Player(name, int(row.get("bankroll") or 0))
+
+            player.bankroll = int(row.get("bankroll") or 0)
+            player.current_bet = int(row.get("current_bet") or 0)
+            player.total_bet = int(row.get("total_bet") or player.current_bet)
+            player.folded = bool(row.get("folded", False))
+            player.all_in = bool(row.get("all_in", False))
+            player.position = int(row.get("position") if row.get("position") is not None else row.get("seat") or 0)
+            player.hands_played = int(row.get("hands_played") or 0)
+            player.hands_won = int(row.get("hands_won") or 0)
+            player.total_winnings = int(row.get("total_winnings") or 0)
+            cards = row.get("hole_cards") if isinstance(row.get("hole_cards"), list) else []
+            player.hole_cards = [_card_from_snapshot(card) for card in cards]
+
+            seat = int(row.get("seat") if row.get("seat") is not None else player.position)
+            seat = max(0, min(8, seat))
+            engine.table.seats[seat] = player
+            engine.table._num_players += 1
+            players_by_name[player.name] = player
+
+        engine.table.dealer_position = int(table_snapshot.get("dealer_position") or 0)
+        engine.table.small_blind_position = int(table_snapshot.get("small_blind_position") or 1)
+        engine.table.big_blind_position = int(table_snapshot.get("big_blind_position") or 2)
+
+        engine.community_cards = [
+            _card_from_snapshot(card)
+            for card in (engine_snapshot.get("community_cards") or [])
+        ]
+        engine.deck = Deck()
+        deck_snapshot = engine_snapshot.get("deck") if isinstance(engine_snapshot.get("deck"), dict) else {}
+        engine.deck.cards = [_card_from_snapshot(card) for card in (deck_snapshot.get("remaining") or [])]
+
+        pot_snapshot = engine_snapshot.get("pot") if isinstance(engine_snapshot.get("pot"), dict) else {}
+        engine.pot = Pot()
+        engine.pot.total = int(pot_snapshot.get("total") or 0)
+        engine.pot.main_pot = int(pot_snapshot.get("main_pot") or engine.pot.total)
+        engine.pot.player_contributions = defaultdict(int)
+        for item in pot_snapshot.get("contributions") or []:
+            if not isinstance(item, dict):
+                continue
+            player = players_by_name.get(str(item.get("player") or ""))
+            if player is not None:
+                engine.pot.player_contributions[player] = int(item.get("amount") or 0)
+        engine.pot.eligible_players = [
+            players_by_name[name]
+            for name in (pot_snapshot.get("eligible_players") or [])
+            if name in players_by_name
+        ]
+        engine.pot.side_pots = [
+            SidePot(
+                int(item.get("amount") or 0),
+                [players_by_name[name] for name in item.get("eligible_players", []) if name in players_by_name],
+            )
+            for item in (pot_snapshot.get("side_pots") or [])
+            if isinstance(item, dict)
+        ]
+
+        try:
+            engine.game_state = GameState(str(engine_snapshot.get("game_state") or GameState.WAITING.value))
+        except ValueError:
+            engine.game_state = GameState.WAITING
+        round_value = engine_snapshot.get("current_betting_round")
+        try:
+            engine.current_betting_round = BettingRound(str(round_value)) if round_value else None
+        except ValueError:
+            engine.current_betting_round = None
+
+        tournament = snapshot.get("tournament") if isinstance(snapshot.get("tournament"), dict) else {}
+        engine._tournament_elimination_order = list(tournament.get("elimination_order") or engine_snapshot.get("tournament_elimination_order") or [])
+        engine._tournament_buy_in = tournament.get("buy_in")
+        engine._tournament_starting_chips = tournament.get("starting_chips")
+        engine._tournament_total_players = tournament.get("total_players")
+        engine._tournament_prize_pool = tournament.get("prize_pool")
+        engine._tournament_cash_bankroll_after_buy_in = tournament.get("cash_bankroll_after_buy_in")
+
+        tracker = engine_snapshot.get("tracker")
+        if isinstance(tracker, dict):
+            engine.session_tracker.restore_state(tracker)
+        engine.session_tracker.on_record_action = lambda _action: engine._emit_state_change("action")
+
+        hand_names = engine_snapshot.get("current_hand_players") or []
+        engine._current_hand_players = [players_by_name[name] for name in hand_names if name in players_by_name]
+        engine._last_winning_hands = list(engine_snapshot.get("last_winning_hands") or [])
+        engine._last_won_by_fold = bool(engine_snapshot.get("last_won_by_fold", False))
+        engine._last_game_over_reason = engine_snapshot.get("last_game_over_reason")
+
+        raise_state = engine_snapshot.get("raise_state") if isinstance(engine_snapshot.get("raise_state"), dict) else {}
+        engine._min_raise_increment = int(raise_state.get("min_raise_increment") or engine_snapshot.get("min_raise_increment") or engine.big_blind)
+        engine._raises_in_round = int(raise_state.get("raises_in_round") or 0)
+        closed_names = raise_state.get("raise_closed_players") or []
+        engine._raise_closed_players = {players_by_name[name] for name in closed_names if name in players_by_name}
+
+        betting_loop = engine_snapshot.get("betting_loop")
+        engine._betting_loop_state = dict(betting_loop) if isinstance(betting_loop, dict) else None
+        engine._restored_pending_continuation = bool(snapshot.get("pending_input")) and engine._betting_loop_state is not None
+        return engine
+
+    def resume_hand(self) -> None:
+        """Continue a restored in-progress hand from the saved betting loop."""
+        if self.get_game_over_reason():
+            self._last_game_over_reason = self.get_game_over_reason()
+            self.game_state = GameState.HAND_COMPLETE
+            return
+
+        betting_round = self.current_betting_round
+        if betting_round is None:
+            if self.game_state == GameState.PREFLOP:
+                betting_round = BettingRound.PREFLOP
+            elif self.game_state == GameState.FLOP:
+                betting_round = BettingRound.FLOP
+            elif self.game_state == GameState.TURN:
+                betting_round = BettingRound.TURN
+            elif self.game_state == GameState.RIVER:
+                betting_round = BettingRound.RIVER
+
+        def complete_if_single_remaining() -> bool:
+            if len(self._get_unfolded_hand_players()) == 1:
+                self._complete_hand()
+                return True
+            return False
+
+        if betting_round == BettingRound.PREFLOP:
+            self.game_state = GameState.PREFLOP
+            self._run_betting_round(BettingRound.PREFLOP, resume=True)
+            if complete_if_single_remaining():
+                return
+            self.game_state = GameState.FLOP
+            self._deal_flop()
+            self.session_tracker.set_board([str(c) for c in self.community_cards])
+            for player in self._get_current_hand_players():
+                player.reset_for_new_round()
+            betting_round = BettingRound.FLOP
+
+        if betting_round == BettingRound.FLOP:
+            self.game_state = GameState.FLOP
+            self._run_betting_round(BettingRound.FLOP, resume=self.current_betting_round == BettingRound.FLOP)
+            if complete_if_single_remaining():
+                return
+            self.game_state = GameState.TURN
+            self._deal_turn()
+            self.session_tracker.set_board([str(c) for c in self.community_cards])
+            for player in self._get_current_hand_players():
+                player.reset_for_new_round()
+            betting_round = BettingRound.TURN
+
+        if betting_round == BettingRound.TURN:
+            self.game_state = GameState.TURN
+            self._run_betting_round(BettingRound.TURN, resume=self.current_betting_round == BettingRound.TURN)
+            if complete_if_single_remaining():
+                return
+            self.game_state = GameState.RIVER
+            self._deal_river()
+            self.session_tracker.set_board([str(c) for c in self.community_cards])
+            for player in self._get_current_hand_players():
+                player.reset_for_new_round()
+            betting_round = BettingRound.RIVER
+
+        if betting_round == BettingRound.RIVER:
+            self.game_state = GameState.RIVER
+            self._run_betting_round(BettingRound.RIVER, resume=self.current_betting_round == BettingRound.RIVER)
+            self.game_state = GameState.SHOWDOWN
+            self._complete_hand()
+
     def get_game_state(self) -> Dict[str, Any]:
         """
         Get current game state for display/saving.
-        
-        Returns:
-            Dictionary containing game state information
+
+        Includes per-player seat metadata (is_dealer, is_small_blind,
+        is_big_blind, is_hero) so the frontend can render a moving
+        dealer button + blind markers without a second API call.
         """
+        # Resolve seat-of-record players so we can mark dealer + blinds.
+        dealer_name = None
+        sb_name = None
+        bb_name = None
+        if self.table:
+            try:
+                dealer = self.table.get_dealer_player()
+                dealer_name = dealer.name if dealer is not None else None
+            except Exception:
+                dealer_name = None
+            try:
+                sb = self.table.get_small_blind_player()
+                sb_name = sb.name if sb is not None else None
+            except Exception:
+                sb_name = None
+            try:
+                bb = self.table.get_big_blind_player()
+                bb_name = bb.name if bb is not None else None
+            except Exception:
+                bb_name = None
+
+        hero_name = self.human_player.name if self.human_player else None
+        players_payload: List[Dict[str, Any]] = []
+        if self.table:
+            for player in self.table.get_players_in_order():
+                players_payload.append(
+                    {
+                        "name": player.name,
+                        "bankroll": player.bankroll,
+                        "current_bet": player.current_bet,
+                        "folded": player.folded,
+                        "all_in": player.all_in,
+                        "position": int(getattr(player, "position", 0) or 0),
+                        "is_dealer": dealer_name is not None and player.name == dealer_name,
+                        "is_small_blind": sb_name is not None and player.name == sb_name,
+                        "is_big_blind": bb_name is not None and player.name == bb_name,
+                        "is_hero": hero_name is not None and player.name == hero_name,
+                    }
+                )
+
+        next_to_act = None
+        if isinstance(self._betting_loop_state, dict):
+            next_to_act = self._betting_loop_state.get("next_to_act")
+
         return {
-            'game_state': self.game_state.value,
-            'community_cards': [str(card) for card in self.community_cards],
-            'pot_size': self.pot.total if self.pot else 0,
-            'players': [
-                {
-                    'name': player.name,
-                    'bankroll': player.bankroll,
-                    'current_bet': player.current_bet,
-                    'folded': player.folded,
-                    'all_in': player.all_in
-                }
-                for player in self.table.get_players_in_order()
-            ] if self.table else [],
-            'blinds': {
-                'small_blind': self.small_blind,
-                'big_blind': self.big_blind,
-                'blind_level': self.blind_level if self.tournament_mode else None
+            "game_state": self.game_state.value,
+            "community_cards": [str(card) for card in self.community_cards],
+            "pot_size": self.pot.total if self.pot else 0,
+            "players": players_payload,
+            "next_to_act": next_to_act,
+            "blinds": {
+                "small_blind": self.small_blind,
+                "big_blind": self.big_blind,
+                "blind_level": self.blind_level if self.tournament_mode else None,
+                "dealer_name": dealer_name,
+                "small_blind_player": sb_name,
+                "big_blind_player": bb_name,
             },
-            'game_over_reason': self.get_game_over_reason()
+            "game_over_reason": self.get_game_over_reason(),
         }

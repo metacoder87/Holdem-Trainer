@@ -418,6 +418,24 @@ class EquityCalculator:
     """
 
     DEFAULT_TRIALS = 1000
+    EXACT_ENUMERATION_LIMIT = 60000
+    MULTIWAY_MIN_TRIALS = 6000
+
+    @staticmethod
+    def _card_identity(card: Card) -> str:
+        """Stable, process-independent card identity for deterministic seeds."""
+        return f"{card.rank.name}:{card.suit.name}"
+
+    @classmethod
+    def _seed_for(cls, hole_groups: List[List[Card]], board: List[Card]) -> int:
+        parts = []
+        for group in hole_groups:
+            parts.append(",".join(cls._card_identity(card) for card in group))
+        board_part = ",".join(cls._card_identity(card) for card in board)
+        payload = "|".join(parts) + f"||{board_part}"
+        import hashlib
+
+        return int.from_bytes(hashlib.sha256(payload.encode("utf-8")).digest()[:8], "big")
 
     @staticmethod
     def _showdown_winners(
@@ -453,7 +471,7 @@ class EquityCalculator:
         """
         if not hole_groups:
             return []
-        rng = rng or _random.Random()
+        rng = rng or _random.Random(cls._seed_for(hole_groups, board))
         deck = _full_deck()
         # Remove dead cards (the players' hole cards and known board cards).
         dead = {(c.suit, c.rank) for group in hole_groups for c in group}
@@ -474,8 +492,21 @@ class EquityCalculator:
                 equities[i] = 1.0 / len(winners)
             return equities
 
+        total_runouts = math.comb(len(remaining), cards_to_come)
+        if total_runouts <= cls.EXACT_ENUMERATION_LIMIT:
+            equities = [0.0] * len(hole_groups)
+            for runout_tuple in combinations(remaining, cards_to_come):
+                winners = cls._showdown_winners(hole_groups, board + list(runout_tuple))
+                if not winners:
+                    continue
+                share = 1.0 / len(winners)
+                for i in winners:
+                    equities[i] += share
+            return [e / total_runouts for e in equities]
+
+        sample_count = max(1, int(trials))
         equities = [0.0] * len(hole_groups)
-        for _ in range(trials):
+        for _ in range(sample_count):
             runout = rng.sample(remaining, cards_to_come)
             winners = cls._showdown_winners(hole_groups, board + runout)
             if not winners:
@@ -484,9 +515,7 @@ class EquityCalculator:
             for i in winners:
                 equities[i] += share
 
-        if trials > 0:
-            equities = [e / trials for e in equities]
-        return equities
+        return [e / sample_count for e in equities]
 
     @classmethod
     def calculate_heads_up_equity(
@@ -528,6 +557,8 @@ class EquityCalculator:
         if not hands:
             return []
         board = list(board or [])
+        if rng is None and len(hands) > 2 and len(board) < 5:
+            trials = max(int(trials), cls.MULTIWAY_MIN_TRIALS)
         return cls._simulate(hands, board, trials=trials, rng=rng)
     
     @staticmethod
