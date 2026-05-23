@@ -103,7 +103,7 @@ jobs:
       - name: Resolve iterations
         id: iters
         run: |
-          INPUT_VAL='${{ github.event.inputs[matrix.iters_input] }}'
+          INPUT_VAL='${{ inputs[matrix.iters_input] }}'
           if [ -z "$INPUT_VAL" ]; then INPUT_VAL='${{ matrix.iters_default }}'; fi
           echo "value=$INPUT_VAL" >> "$GITHUB_OUTPUT"
 
@@ -143,10 +143,10 @@ jobs:
       - name: Attach to Release
         if: |
           startsWith(github.ref, 'refs/tags/') ||
-          (github.event.inputs.attach_to_release != null && github.event.inputs.attach_to_release != '')
+          (inputs.attach_to_release != null && inputs.attach_to_release != '')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || github.event.inputs.attach_to_release }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.attach_to_release }}
           files: out/${{ matrix.name }}.npz
           fail_on_unmatched_files: true
           generate_release_notes: false
