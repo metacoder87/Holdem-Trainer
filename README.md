@@ -1,222 +1,246 @@
 # PyHoldem Pro
 
-PyHoldem Pro is a terminal-based Texas Hold’em poker game and training platform. It includes cash games and tournaments, multiple AI styles, a training HUD, in-game quizzes, post-hand feedback, persistent player profiles, and replayable hand histories.
+[![Python](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688.svg)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/react-18.2-61dafb.svg)](https://react.dev/)
+[![Docker](https://img.shields.io/badge/docker-compose-blue.svg)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Status
+An advanced, local-first Texas Hold'em gameplay simulator, training dashboard, and analytics platform. Designed to run offline for total data privacy, PyHoldem Pro tracks gameplay, grades decisions in real time using expected value (EV) calculations, identifies systemic leaks, and curates weak areas using adaptive spaced-repetition drills.
 
-- Core gameplay and rules engine implemented (cash + tournament, limit + no-limit)
-- Training experience integrated (HUD, server-owned quizzes, post-hand feedback, adaptive session menu)
-- Hand history persistence + replay implemented (per-player JSONL histories)
-- Decision-point capture + grading implemented (stored per hand and summarized per session)
-- Web training progress stores quiz/drill attempts per player profile
-- Test suite: 372 passing Python tests plus frontend Vitest coverage
+![Architecture Diagram/UI Demo](https://raw.githubusercontent.com/username/project/main/docs/assets/demo_placeholder.gif)
 
-## Features
+## Core Features
 
-### Gameplay
+- **Double-Sized Core Engine:** Simulates cash games and single-table tournaments (Limit and No-Limit rulesets) with up to 9-handed tables, tracking complex side-pot distributions and all-in mechanics.
+- **Real-Time Decision Evaluator:** Computes expected value (EV) changes in Big Blinds for player choices, providing live, interactive coaching feedback.
+- **Adaptive Drills & Quizzes:** Utilizes a Thompson sampling bandit model and SM-2 Spaced-Repetition algorithms to test players on Pot Odds, Implied Odds, and Bet Sizing.
+- **Advanced Analytics & Heatmaps:** Renders detailed dashboards showing standard deviation variance, Kelly criterion bankroll projections, tournament ICM (Independent Chip Model) risk premiums, and a 3D regret heatmap.
+- **Range Equity Calculator:** Built-in heads-up and multiway range-vs-range Monte Carlo equity simulator accounting for blockers and suit removal.
+- **Docker-Compose Ready Stack:** Run the entire system, database, and observability dashboard locally with a single shell command.
 
-- Cash games and tournaments
-- No-limit and fixed-limit betting
-- 2–9 handed tables (1 human + AI opponents)
-- Side pots and all-in handling
-- Realistic tournament structure (blind levels, antes, eliminations, payouts)
+## Architecture & Tech Stack
 
-### Betting correctness
+### Frontend & Client
 
-- No-limit minimum raise sizing (tracks last full raise size)
-- Non-full all-in raises do not reopen betting
-- Fixed-limit street bet sizing and raise cap (max 4 bets per round)
+- **React 18 & TypeScript:** Single-Page Application (SPA) utilizing modular state stores.
+- **Vite:** Next-generation frontend build tooling.
+- **ECharts:** High-performance charting library for rendering session trends and heatmaps.
+- **Vanilla CSS:** Custom responsive design system optimized for layout rendering.
 
-### AI opponents
+### Backend & Orchestration
 
-- Multiple AI styles (cautious, wild, balanced, random)
+- **FastAPI:** Asynchronous Web API server hosting REST endpoints and WebSocket channels.
+- **Python 3.13:** Optimized mathematical loops, poker rule structures, and equity solvers.
+- **CFR Solvers:** Built-in Vanilla CFR and CFR+ solvers for game-theory equilibrium research.
 
-### Training and analytics
+### Infrastructure & Data
 
-- Optional in-game training:
-  - Pot-odds quizzes at decision points
-  - HUD with opponent stats (VPIP/PFR/AF), pot odds, and equity/outs overlays
-  - Post-hand feedback summaries
-- Session tracking (VPIP, PFR, aggression factor, quiz accuracy, decision accuracy)
-- Training Session mode with:
-  - Personalized drills and scenarios (from identified weaknesses)
-  - Server-graded quiz and drill attempts persisted to the active player
-  - Session review and career report
-  - Recent hand review + replay
+- **PostgreSQL / SQLAlchemy / Alembic:** SQL-persistence database with ORM mapping and migration schemas.
+- **Docker & Docker Compose:** Containerized microservices.
+- **Prometheus & Grafana:** Infrastructure metric scraping and observability dashboarding.
 
-### Persistence
+```mermaid
+flowchart TD
+  subgraph UI ["User Interface (React / TS / Vite)"]
+    direction TB
+    GamesPage["Games View<br>(Session Creation)"]
+    SessionPage["Session View<br>(Live Table HUD & Action Controls)"]
+    TrainingPage["Training View<br>(Odds Quizzes & Leak Radar)"]
+    DrillPage["Drill View<br>(Targeted Practice Stepper)"]
+    AnalyticsPage["Analytics View<br>(ECharts, Leak Lab, Risk Panels)"]
+    ReplayPage["Replay View<br>(Hand Replayer & EV Stepper)"]
+  end
 
-- Player profiles stored in `data/players.json`
-- Per-player hand histories stored as JSONL in `data/hand_histories/`
-- Recent hands are also cached into player profiles for quick access
+  subgraph API ["API Server (FastAPI / Uvicorn)"]
+    direction TB
+    APIRouter["REST API Routing<br>(FastAPI APIRouter)"]
+    WSServer["WebSocket Server<br>(ws/sessions/{id})"]
+  end
 
-### PostgreSQL (optional)
+  subgraph CORE ["Core Poker Engine"]
+    direction TB
+    GameEngine["GameEngine Loop<br>(Preflop to Showdown)"]
+    TableState["Table, Player, & Deck States"]
+    HandEval["Fast Showdown Evaluator<br>(fast_eval.py)"]
+    PotCalc["Pot & SidePot Manager<br>(pot.py)"]
+  end
 
-Set `PYHOLDEM_DB_URL` to use PostgreSQL for persistence instead of JSON files.
+  subgraph AI ["AI & GTO Systems"]
+    direction TB
+    HeuristicAIs["Heuristic AI Opponents<br>(Cautious, Wild, Balanced)"]
+    GTOAdvisor["GTO Range Advisor<br>(gto_advisor.py)"]
+    CFRSolvers["CFR+ / Kuhn / Leduc Solvers<br>(cfr/solvers/)"]
+  end
 
-Example:
+  subgraph TRAIN ["Training & Adaptive Engine"]
+    direction TB
+    PokerTrainer["PokerTrainer Quiz Generator<br>(Pot Odds, Implied, Bet Sizing)"]
+    AdaptiveState["AdaptiveState Engine<br>(adaptive_engine.py)"]
+    ThompsonBandit["Thompson Sampling Topic Bandit"]
+    SM2SRS["SM-2 Spaced-Repetition System"]
+    HandAnalyzer["Coaching Hand Analyzer<br>(analyzer.py)"]
+  end
 
-```bash
-export PYHOLDEM_DB_URL="postgresql://user:password@localhost:5432/pyholdem"
+  subgraph MATH ["Quant & Mathematical Services"]
+    direction TB
+    BayesStats["Bayes Stats Services<br>(Credible Intervals, Bootstrapping)"]
+    VarianceCalc["Variance & Risk Calculator<br>(Kelly Fraction, Risk of Ruin)"]
+    IcmCalculator["IcmCalculator<br>(Malmuth-Harville ICM, Risk Premium)"]
+    MonteCarloRangeEq["Monte Carlo Equity Calculator<br>(Range vs Range, Blockers)"]
+  end
+
+  subgraph INFRA ["Infrastructure & Storage"]
+    direction TB
+    DataManager["DataManager Layer<br>(data/manager.py)"]
+    JSONStore["JSON FileDB Store<br>(players.json, hand logs JSONL)"]
+    PostgresDB["PostgreSQL Database<br>(SQLAlchemy / Alembic)"]
+    CFRData["Pre-Solved GTO Policy Files<br>(/data/cfr)"]
+  end
+
+  subgraph OBS ["Observability Stack"]
+    direction TB
+    Prometheus["Prometheus Time-Series Scraper"]
+    Grafana["Grafana Golden Signals Dashboards"]
+  end
+
+  %% Data Flow & Action Links
+  GamesPage -->|POST /api/games/sessions| APIRouter
+  SessionPage <-->|WS Action Stream| WSServer
+  TrainingPage -->|GET /api/training/quiz| APIRouter
+  DrillPage -->|GET /api/training/drill| APIRouter
+  AnalyticsPage -->|GET /api/analytics/variance| APIRouter
+  ReplayPage -->|GET /api/hands/filter| APIRouter
+
+  WSServer <-->|Real-Time Game State Sync| GameEngine
+  APIRouter -->|Drill Configuration & Evaluation| AdaptiveState
+  APIRouter -->|Generate/Evaluate Quiz| PokerTrainer
+  APIRouter -->|Compute Bayesian CIs| BayesStats
+  APIRouter -->|Compute Kelly & Risk metrics| VarianceCalc
+  APIRouter -->|ICM Equities & Bubble Factor| IcmCalculator
+  APIRouter -->|Range vs Range Equity| MonteCarloRangeEq
+  APIRouter -->|Query Hand History & Profiles| DataManager
+
+  GameEngine <-->|Read / Write States| TableState
+  GameEngine -->|Showdown Hand Evaluation| HandEval
+  GameEngine -->|Manage Chips Distribution| PotCalc
+  GameEngine -->|Get Opponent Decisions| HeuristicAIs
+  GameEngine -->|Get Strategic Advice| GTOAdvisor
+  GameEngine -->|Record Human Decision Points| HandAnalyzer
+
+  GTOAdvisor -->|Lookup Ranges| CFRData
+  CFRSolvers -.->|Pre-train Strategy Models| CFRData
+
+  AdaptiveState -->|SM-2 Intervals| SM2SRS
+  AdaptiveState -->|Targeted Weakness Selection| ThompsonBandit
+  HandAnalyzer -->|Evaluate Decision EV Loss| MonteCarloRangeEq
+  HandAnalyzer -->|Persist Grades to Profile| DataManager
+
+  DataManager <-->|Read / Write Profiles & JSONL Logs| JSONStore
+  DataManager <-->|Postgres SQL Mirroring| PostgresDB
+
+  Prometheus -->|Scrape /health Metrics| APIRouter
+  Grafana -->|Query Dashboard Metrics| Prometheus
 ```
 
-To migrate existing JSON data:
+## Quick Start / Local Installation
+
+### Prerequisites
+
+Make sure you have the following installed on your machine:
+
+- **Python 3.13+**
+- **Node.js 18+**
+- **Docker & Docker Compose** (Optional, for containerized run)
+
+### Local Development Setup
+
+1. **Clone the repository:**
+
+   ```bash
+   git clone https://github.com/username/Holdem-Trainer.git
+   cd Holdem-Trainer
+   ```
+
+2. **Configure Environment Variables:**
+   Copy the example environment file and adjust values as needed.
+
+   ```bash
+   cp .env.example .env
+   ```
+
+3. **Backend Installation:**
+   Initialize a virtual environment and install dependencies:
+
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows use: venv\Scripts\activate
+   pip install -r requirements-dev.txt
+   ```
+
+   Start the FastAPI development server:
+
+   ```bash
+   PYTHONPATH=backend uvicorn app.main:app --reload --port 8000
+   ```
+
+4. **Frontend Installation:**
+   Open a separate terminal window, install npm packages, and start Vite:
+
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+
+   Open your browser to `http://localhost:5173`.
+
+### Running with Docker Compose
+
+To launch the entire stack—including PostgreSQL, the application backend, frontend web UI, and the Prometheus/Grafana monitoring dashboard:
 
 ```bash
-python scripts/migrate_json_to_db.py --db-url "$PYHOLDEM_DB_URL"
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
 ```
 
-## Requirements
+- Access the **Frontend Web Application** at: `http://localhost:5173`
+- Access the **FastAPI Backend Documentation** at: `http://localhost:8000/docs`
+- Access the **Grafana Dashboard** at: `http://localhost:3000` (Default: `admin` / `admin`)
 
-- Python 3.8+
+## Repository Structure
 
-Runtime dependencies are listed in `requirements.txt` and backend service dependencies are listed in `backend/requirements.txt`. Dev/test installs should use `requirements-dev.txt`, which includes both.
-
-## Install
-
-```bash
-python -m venv venv
-source venv/bin/activate  # Windows: venv\\Scripts\\activate
-pip install -r requirements.txt
+```markdown
+├── .github/                  # CI/CD Workflows
+├── backend/                  # FastAPI Application Service
+│   ├── app/
+│   │   ├── api/              # API Route Handlers (REST & WebSockets)
+│   │   ├── core/             # Path resolution and database configs
+│   │   ├── schemas/          # Pydantic request/response schemas
+│   │   └── services/         # Game logic wrappers & analytical engines
+│   └── requirements.txt      # Production backend requirements
+├── data/                     # Local file database directory
+├── docker/                   # Observability configs (Prometheus, Grafana)
+├── docs/                     # API Contracts, Roadmaps, and design specifications
+├── frontend/                 # Vite + React + TypeScript Frontend Client
+│   ├── src/
+│   │   ├── api/              # Auto-generated API client and endpoints
+│   │   ├── components/       # Visual HUD, panels, and ECharts modules
+│   │   └── pages/            # Core views (Session, Analytics, Drills, Replays)
+│   ├── package.json
+│   └── vite.config.ts
+├── src/                      # Core Python Library
+│   ├── cfr/                  # CFR+ and vanilla game-theoretic solvers
+│   ├── game/                 # Table structure, pot distribution, and deck mechanics
+│   ├── stats/                # Variance calculators and ICM engines
+│   └── training/             # PokerTrainer quiz banks and SRS/Adaptive models
+├── tests/                    # 630+ Pytest unit and integration test files
+├── docker-compose.yml        # Docker Compose configuration
+├── main.py                   # CLI Application Entry Point
+└── run_tests.py              # Test Execution Runner script
 ```
 
-For development and testing:
+## Contact & Links
 
-```bash
-py -3 -m pip install -r requirements-dev.txt
-```
-
-## Run CLI Application
-
-```bash
-python main.py
-```
-
-Optional demos:
-
-```bash
-python scripts/simple_demo.py
-python scripts/training_demo.py
-python scripts/demo.py
-```
-
-## Web API (FastAPI)
-
-The API wraps the core engine for UI consumption (summary, training content, bankroll, demo hands).
-See `docs/api-contract.md` for the full contract.
-
-Run the API:
-
-```bash
-pip install -r backend/requirements.txt
-PYTHONPATH=backend uvicorn app.main:app --reload
-```
-
-Useful endpoints:
-
-- `GET /health`
-- `GET /api/summary`
-- `GET /api/training/content`
-- `GET /api/training/quiz`
-- `POST /api/training/quiz/evaluate`
-- `GET /api/training/drill`
-- `POST /api/training/drill/evaluate`
-- `GET /api/training/progress`
-- `GET /api/bankroll/players`
-- `POST /api/bankroll/players`
-- `PATCH /api/bankroll/players/{player_name}`
-- `GET /api/games/modes`
-- `POST /api/games/sessions`
-- `GET /api/games/sessions/{session_id}`
-- `POST /api/games/sessions/{session_id}/hand/start`
-- `POST /api/games/sessions/{session_id}/hand/input`
-- `WS /ws/sessions/{session_id}`
-- `POST /api/games/sessions/{session_id}/demo-hand`
-
-## Frontend (React)
-
-The web UI lives in `frontend/` and consumes the FastAPI endpoints.
-See `frontend/README.md` for details.
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-If the API is not on `http://localhost:8000`, set `VITE_API_URL` in `frontend/.env`.
-The API allows `http://localhost:5173` and `http://127.0.0.1:5173` by default; override with `PYHOLDEM_CORS_ORIGINS` for other frontend hosts.
-
-## How to use
-
-1. Create or select a player profile
-2. Choose a mode:
-   - Cash Game
-   - Tournament
-   - Training Session (standalone drills and reviews)
-3. For Cash/Tournament, optionally enable training:
-   - In-game quizzes
-   - HUD
-   - Post-hand feedback
-4. Play hands, complete drills/quizzes, and review results
-
-### Hand history replay
-
-Go to `Training Session` → `Review Recent Hands` and select:
-
-- Quick view (prints the full hand)
-- Replay (street-by-street, including decision grades when available)
-
-### Educational content
-
-The Training Session menu includes an option to export default study materials into `educational_content/`.
-
-## Data files
-
-- Player profiles: `data/players.json`
-- Hand histories (JSONL): `data/hand_histories/*.jsonl`
-
-If you want a clean slate, delete those files/directories (or back them up first).
-
-## Testing
-
-Run the full test suite:
-
-```bash
-py -3 -m pip install -r requirements-dev.txt
-python -m pytest -q
-```
-On Windows systems where `python` is the Microsoft Store alias, use `py -3 -m pytest -q`.
-
-Or use the Makefile:
-
-```bash
-make test
-```
-
-## Project layout
-
-- `src/game/`: engine, rules, AI, table, pot, hand evaluation
-- `src/stats/`: session tracking and odds/stat calculators
-- `src/training/`: HUD, analyzers, adaptive training, replay tools
-- `src/data/`: player persistence and hand-history storage
-- `src/ui/`: terminal display and input handling
-- `scripts/`: demos and manual test scripts
-- `tests/`: unit + integration tests
-
-## Roadmap
-
-See `docs/ROADMAP.md` for actionable phases, deliverables, and acceptance criteria.
-
-## Disclaimer
-
-This project is for education and practice. It is not intended for real-money play.
-
-## Contributing
-
-- Keep changes focused and add/update tests when modifying behavior.
-- Run `python -m pytest -q` (or `make test`) before opening a PR.
-
-## License
-
-A license file is not currently included in this repository. If you plan to redistribute, add an explicit license first.
+- **Developer Portfolio:** [portfolio.example.com](http://portfolio.example.com)
+- **LinkedIn Profile:** [linkedin.com/in/username](https://www.linkedin.com/in/username)
+- **Email:** [contact@example.com](mailto:contact@example.com)
