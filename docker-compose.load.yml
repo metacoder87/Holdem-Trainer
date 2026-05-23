@@ -12,6 +12,15 @@ services:
       # Default profile - k6 only starts when explicitly invoked,
       # not on `docker compose up`.
       - load
+    # The grafana/k6 image runs its entrypoint as the non-root `k6`
+    # user (UID 12345). Docker initialises named volumes as root:root
+    # mode 0755, so without this override k6 cannot create
+    # /results/last_run.json (K6_OUT) and aborts during the "Starting
+    # outputs" init phase with `permission denied`. Running as root
+    # inside the throwaway container is the standard fix and matches
+    # the pattern documented in grafana/k6 issues for bind/named
+    # volume output.
+    user: "0:0"
     environment:
       BASE_URL: http://backend:8000
       WS_URL: ws://backend:8000
