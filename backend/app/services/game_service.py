@@ -942,7 +942,7 @@ def _opponent_for_coach(session: LiveSession, aggressor_name: Optional[str]) -> 
 
 
 def _coach_history_signals(session: LiveSession, preferred_focus: Optional[str]) -> List[str]:
-    manager = session.engine.data_manager or _manager()
+    manager = session.engine.data_manager or DataManager(data_file=str(get_data_file()))
     try:
         record = manager.get_player(session.player_name) if manager else None
     except Exception:
