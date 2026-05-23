@@ -1449,6 +1449,18 @@ def get_hand_state(session_id: str) -> Dict[str, Any]:
     session = _get_live_session_or_restore(session_id)
     if not session:
         raise KeyError("Session not found")
+    # Long-poll semantics: if the engine thread is still working and
+    # hasn't yet posted a pending input, wait briefly for it to either
+    # surface a prompt or finish the hand. This keeps polling clients
+    # (and tests) from racing the engine on slow CPUs where the bot's
+    # Monte Carlo equity / GTO bucketing can take >100ms per decision.
+    # Mirrors the bounded wait already done by start_hand / submit_input.
+    if (
+        session.thread
+        and session.thread.is_alive()
+        and not session.input_handler.pending_request()
+    ):
+        _wait_for_update(session, timeout=1.0)
     return _build_hand_response(session)
 
 

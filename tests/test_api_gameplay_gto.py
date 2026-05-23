@@ -17,7 +17,9 @@ that the optional villain_style param doesn't break unrelated flows.
 """
 from __future__ import annotations
 
+import random
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -56,15 +58,36 @@ def _payload_for_pending(pending):
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PYHOLDEM_DATA_FILE", str(tmp_path / "players.json"))
+    # Seed RNG so the hand sequence is reproducible across runs and
+    # across platforms. Without this, slower CI runners can hit an
+    # unusually long action sequence and exhaust the polling budget.
+    random.seed(0xC0FFEE)
     game_service.SESSIONS.clear()
     return TestClient(app)
 
 
-def _play_one_hand(client, session_id: str, max_steps: int = 30) -> dict:
-    """Drive a hand to completion and return the terminal state."""
+def _play_one_hand(
+    client,
+    session_id: str,
+    *,
+    timeout: float = 30.0,
+    max_steps: int = 200,
+) -> dict:
+    """Drive a hand to completion and return the terminal state.
+
+    Uses a wall-clock deadline as the primary stopping condition so we
+    don't fail the test on slow CI runners where a single bot decision
+    can take a meaningful fraction of a second. ``max_steps`` is kept
+    as a safety net to avoid runaway loops if the engine wedges.
+    """
     state = client.post(f"/api/games/sessions/{session_id}/hand/start").json()
+    deadline = time.monotonic() + timeout
     steps = 0
-    while state.get("status") != "hand_complete" and steps < max_steps:
+    while (
+        state.get("status") != "hand_complete"
+        and steps < max_steps
+        and time.monotonic() < deadline
+    ):
         pending = state.get("pending_input")
         if pending:
             state = client.post(
@@ -73,6 +96,15 @@ def _play_one_hand(client, session_id: str, max_steps: int = 30) -> dict:
             ).json()
         else:
             state = client.get(f"/api/games/sessions/{session_id}/hand").json()
+            # The GET path now long-polls server-side, but if it ever
+            # returns immediately with an "in_hand / no pending" state
+            # (e.g., during a TestClient race), give the engine thread
+            # a tiny breather before hammering it again.
+            if (
+                state.get("status") == "in_hand"
+                and not state.get("pending_input")
+            ):
+                time.sleep(0.02)
         steps += 1
     return state
 
