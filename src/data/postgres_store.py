@@ -89,6 +89,35 @@ class PostgresStore:
             record["skill_level"] = row.skill_level
         return record
 
+    def import_players_data(self, players: Dict[str, Dict[str, Any]]) -> int:
+        imported = 0
+        with self._session_scope() as session:
+            for name, data in players.items():
+                name = name.strip()
+                if session.get(PlayerRecord, name):
+                    continue
+
+                created_at = _parse_datetime(data.get("created_at")) or _now()
+                last_played = _parse_datetime(data.get("last_played")) or _now()
+
+                record = dict(data)
+                record.setdefault("name", name)
+                record.setdefault("bankroll", int(data.get("bankroll", 0)))
+                record.setdefault("created_at", created_at.isoformat())
+                record.setdefault("last_played", last_played.isoformat())
+
+                row = PlayerRecord(
+                    name=name,
+                    bankroll=int(data.get("bankroll", 0)),
+                    created_at=created_at,
+                    last_played=last_played,
+                    skill_level=data.get("skill_level"),
+                    data=record,
+                )
+                session.add(row)
+                imported += 1
+        return imported
+
     def create_player(self, name: str, initial_bankroll: int) -> Dict[str, Any]:
         name = name.strip()
         now = _now()

@@ -28,4 +28,4 @@ EXPOSE 8000
 
 # Uvicorn loads app.main:app from the backend/ package.
 WORKDIR /app/backend
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "if [ -n \"$PYHOLDEM_DB_URL\" ]; then alembic upgrade head; fi && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

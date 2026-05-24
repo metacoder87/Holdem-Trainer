@@ -3,8 +3,11 @@ from typing import List
 
 class Settings:
     DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", 
-        "postgresql://postgres:postgres@localhost:5435/holdem_trainer"
+        "PYHOLDEM_DB_URL",
+        os.getenv(
+            "DATABASE_URL", 
+            "postgresql://postgres:postgres@localhost:5435/holdem_trainer"
+        )
     )
     CORS_ORIGINS: List[str] = [
         origin.strip()
